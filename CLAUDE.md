@@ -86,3 +86,10 @@ class Star:
 - Single observations give direction only, not distance - triangulation requires multiple observatories
 - The game likely projects stars onto a spherical skybox - must replicate this projection math
 - Player names limited to 6 uppercase characters with numbers and basic symbols
+
+## Future Ideas (Backlog)
+
+These are explicitly deferred—not part of current milestones:
+
+- **Travel path visualization**: Show a path tracing visited stars in order (mirrors in-game feature)
+- **Mapping progress indicator**: Show percentage of stars catalogued (in-game shows cluster-wide naming progress)

@@ -17,32 +17,41 @@ RANGE_TO_LETTER = {v: k for k, v in LETTER_TO_RANGE.items()}
 class Star:
     """Represents a star in the MirrorMoon EP galaxy."""
 
-    coordinates: str  # 9-digit location "XXXYYYZZZ"
-    original_name: str  # XXX/## format
+    coordinates: str | None  # 9-digit location "XXXYYYZZZ", or None if unknown
+    original_name: str | None  # XXX/## format
     player_name: str | None = None  # max 6 chars, uppercase
     discovered_by_user: bool = False
-    has_observatory: bool = False
-    observatory_active: bool = False
-    anomaly_visible: bool = False
+    has_observatory: bool | None = None
+    observatory_active: bool | None = None
+    anomaly_visible: bool | None = None
+    notes: str | None = None  # Optional notes about this star
 
     # Cached position for performance
     _position: np.ndarray | None = field(default=None, repr=False)
 
     def __post_init__(self):
-        if len(self.coordinates) != 9 or not self.coordinates.isdigit():
-            raise ValueError(f"Coordinates must be 9 digits, got: {self.coordinates}")
+        if self.coordinates is not None:
+            if len(self.coordinates) != 9 or not self.coordinates.isdigit():
+                raise ValueError(f"Coordinates must be 9 digits, got: {self.coordinates}")
 
     @property
-    def position(self) -> np.ndarray:
-        """Return (x, y, z) position as numpy array."""
+    def position(self) -> np.ndarray | None:
+        """Return (x, y, z) position as numpy array, or None if coordinates unknown."""
+        if self.coordinates is None:
+            return None
         if self._position is None:
             self._position = np.array(parse_coordinates(self.coordinates), dtype=np.float64)
         return self._position
 
     @property
+    def has_position(self) -> bool:
+        """Return True if this star has known coordinates."""
+        return self.coordinates is not None
+
+    @property
     def display_name(self) -> str:
-        """Return player name if set, otherwise original name."""
-        return self.player_name or self.original_name
+        """Return player name if set, otherwise original name, or '(unnamed)'."""
+        return self.player_name or self.original_name or "(unnamed)"
 
 
 def parse_coordinates(coord_string: str) -> Tuple[int, int, int]:

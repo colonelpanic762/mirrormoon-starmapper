@@ -1,22 +1,286 @@
 {
   "stars": [
     {
-      "coordinates": "500500500",
-      "original_name": "HHH/00",
-      "player_name": null,
-      "discovered_by_user": false,
-      "has_observatory": true,
-      "observatory_active": true,
-      "anomaly_visible": false
-    },
-    {
-      "coordinates": "100200300",
-      "original_name": "EIU/00",
-      "player_name": "HOME",
+      "coordinates": "705278508",
+      "original_name": "LIH/00",
+      "player_name": "BENCHI",
       "discovered_by_user": true,
       "has_observatory": false,
       "observatory_active": false,
       "anomaly_visible": false
+    },
+    {
+      "coordinates": "678314289",
+      "original_name": "JUI/00",
+      "player_name": "NEWTAM",
+      "discovered_by_user": true,
+      "has_observatory": false,
+      "observatory_active": false,
+      "anomaly_visible": false
+    },
+    {
+      "coordinates": "632288258",
+      "original_name": "JII/00",
+      "player_name": "MARCO",
+      "discovered_by_user": true,
+      "has_observatory": false,
+      "observatory_active": false,
+      "anomaly_visible": false
+    },
+    {
+      "coordinates": "666372200",
+      "original_name": "JUI/01",
+      "player_name": "STRINA",
+      "discovered_by_user": true,
+      "has_observatory": false,
+      "observatory_active": false,
+      "anomaly_visible": false
+    },
+    {
+      "coordinates": "554473300",
+      "original_name": "HYU/00",
+      "player_name": "OOLKO",
+      "discovered_by_user": true,
+      "has_observatory": false,
+      "observatory_active": false,
+      "anomaly_visible": false
+    },
+    {
+      "coordinates": "499477290",
+      "original_name": "YYI/00",
+      "player_name": "EEESY",
+      "discovered_by_user": true,
+      "has_observatory": false,
+      "observatory_active": false,
+      "anomaly_visible": false
+    },
+    {
+      "coordinates": "486507333",
+      "original_name": "YHU/00",
+      "player_name": "FPHILL",
+      "discovered_by_user": true,
+      "has_observatory": false,
+      "observatory_active": false,
+      "anomaly_visible": false
+    },
+    {
+      "coordinates": "477492403",
+      "original_name": "YYY/00",
+      "player_name": "KNOWER",
+      "discovered_by_user": true,
+      "has_observatory": false,
+      "observatory_active": false,
+      "anomaly_visible": false
+    },
+    {
+      "coordinates": "822205877",
+      "original_name": "TIT/79",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null
+    },
+    {
+      "coordinates": "914179245",
+      "original_name": "XEI/00",
+      "player_name": "DARK70",
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null
+    },
+    {
+      "coordinates": "540032756",
+      "original_name": "HAL/00",
+      "player_name": "S",
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null
+    },
+    {
+      "coordinates": "746038279",
+      "original_name": "LAI/36",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null
+    },
+    {
+      "coordinates": "375006759",
+      "original_name": "UAL/36",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null
+    },
+    {
+      "coordinates": "071083931",
+      "original_name": "AAX/78",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null
+    },
+    {
+      "coordinates": "822732381",
+      "original_name": "TLU/00",
+      "player_name": "FIORE",
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null
+    },
+    {
+      "coordinates": "960927268",
+      "original_name": "XXI/05",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null
+    },
+    {
+      "coordinates": "590949307",
+      "original_name": "HXU/00",
+      "player_name": "OBS1",
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null
+    },
+    {
+      "coordinates": "591584428",
+      "original_name": "HHY/00",
+      "player_name": "OBS007",
+      "discovered_by_user": true,
+      "has_observatory": true,
+      "observatory_active": true,
+      "anomaly_visible": true
+    },
+    {
+      "coordinates": null,
+      "original_name": null,
+      "player_name": "ETHAN",
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Reference star near anomaly (from OBS007 view)"
+    },
+    {
+      "coordinates": null,
+      "original_name": "AJY/95",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Reference star near anomaly (from OBS007 view). Approx region: (0xx, 6xx, 4xx)"
+    },
+    {
+      "coordinates": null,
+      "original_name": null,
+      "player_name": "ULIGY",
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Reference star near anomaly (from OBS007 view)"
+    },
+    {
+      "coordinates": null,
+      "original_name": null,
+      "player_name": "GIOVAN",
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Reference star near anomaly (from OBS007 view)"
+    },
+    {
+      "coordinates": null,
+      "original_name": "HTT/63",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBS007. Approx region: (5xx, 8xx, 8xx)"
+    },
+    {
+      "coordinates": null,
+      "original_name": "JJJ/40",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBS007. Approx region: (6xx, 6xx, 6xx)"
+    },
+    {
+      "coordinates": null,
+      "original_name": "XUY/91",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBS007. Approx region: (9xx, 3xx, 4xx)"
+    },
+    {
+      "coordinates": null,
+      "original_name": "THI/24",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBS007. Approx region: (8xx, 5xx, 2xx)"
+    },
+    {
+      "coordinates": null,
+      "original_name": "TEE/63",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBS007. Approx region: (8xx, 1xx, 1xx)"
+    },
+    {
+      "coordinates": null,
+      "original_name": "JAX/94",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBS007. Approx region: (6xx, 0xx, 9xx)"
+    },
+    {
+      "coordinates": null,
+      "original_name": "UEE/16",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBS007. Approx region: (3xx, 1xx, 1xx)"
+    },
+    {
+      "coordinates": null,
+      "original_name": "EEH/03",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBS007. Approx region: (1xx, 1xx, 5xx)"
     }
   ],
   "observations": []

@@ -16,13 +16,14 @@ def load_stars(data_path: Path) -> list[Star]:
     stars = []
     for star_data in data.get("stars", []):
         stars.append(Star(
-            coordinates=star_data["coordinates"],
-            original_name=star_data["original_name"],
+            coordinates=star_data.get("coordinates"),
+            original_name=star_data.get("original_name"),
             player_name=star_data.get("player_name"),
             discovered_by_user=star_data.get("discovered_by_user", False),
-            has_observatory=star_data.get("has_observatory", False),
-            observatory_active=star_data.get("observatory_active", False),
-            anomaly_visible=star_data.get("anomaly_visible", False),
+            has_observatory=star_data.get("has_observatory"),
+            observatory_active=star_data.get("observatory_active"),
+            anomaly_visible=star_data.get("anomaly_visible"),
+            notes=star_data.get("notes"),
         ))
 
     return stars
@@ -43,15 +44,31 @@ def main():
         return 1
 
     stars = load_stars(args.data)
-    print(f"Loaded {len(stars)} stars")
 
-    for star in stars:
+    stars_with_coords = [s for s in stars if s.has_position]
+    stars_without_coords = [s for s in stars if not s.has_position]
+
+    print(f"Loaded {len(stars)} stars ({len(stars_with_coords)} with coordinates, {len(stars_without_coords)} pending)")
+
+    print("\n== Stars with known coordinates ==")
+    for star in stars_with_coords:
         x, y, z = parse_coordinates(star.coordinates)
-        print(f"  {star.display_name}: ({x}, {y}, {z})")
+        status = ""
+        if star.has_observatory:
+            status = " [OBSERVATORY]"
+        if star.anomaly_visible:
+            status += " [ANOMALY VISIBLE]"
+        print(f"  {star.display_name}: ({x}, {y}, {z}){status}")
 
-    if len(stars) >= 2:
-        d = distance(stars[0], stars[1])
-        print(f"\nDistance between {stars[0].display_name} and {stars[1].display_name}: {d:.2f}")
+    if stars_without_coords:
+        print("\n== Stars pending coordinates ==")
+        for star in stars_without_coords:
+            print(f"  {star.display_name}")
+
+    if len(stars_with_coords) >= 2:
+        s1, s2 = stars_with_coords[0], stars_with_coords[1]
+        d = distance(s1, s2)
+        print(f"\nDistance between {s1.display_name} and {s2.display_name}: {d:.2f}")
 
     return 0
 
