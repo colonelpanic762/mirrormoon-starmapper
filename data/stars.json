@@ -1,0 +1,23 @@
+{
+  "stars": [
+    {
+      "coordinates": "500500500",
+      "original_name": "HHH/00",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": true,
+      "observatory_active": true,
+      "anomaly_visible": false
+    },
+    {
+      "coordinates": "100200300",
+      "original_name": "EIU/00",
+      "player_name": "HOME",
+      "discovered_by_user": true,
+      "has_observatory": false,
+      "observatory_active": false,
+      "anomaly_visible": false
+    }
+  ],
+  "observations": []
+}
