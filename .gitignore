@@ -32,3 +32,4 @@ Thumbs.db
 
 # Scratchpad files
 data/stars-to-import.csv
+data/*.png
