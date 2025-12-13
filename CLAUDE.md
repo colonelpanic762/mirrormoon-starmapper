@@ -176,3 +176,6 @@ These are explicitly deferred—not part of current milestones:
 - **Mapping progress indicator**: Show percentage of stars catalogued (in-game shows cluster-wide naming progress)
 - **Map orientation helper**: Utility to determine viewing direction by comparing star positions before/after moving (left/right/up/down), then guide user to find missing stars
 - **Coordinate prediction**: Estimate likely coordinates of player-named stars based on their relative angular positions to known-coordinate stars from observatory views
+- **Auto-alignment**: Given an observatory and a list of reference star names, automatically compute azimuth/elevation to center those stars in the view. User would then only need to determine flip settings and rotation to match their in-game orientation.
+- **GUI**: Unified graphical interface bringing together the 3D star map, observatory views, and triangulation workflow.
+- **Auto-generated star names**: Generate systematic names for discovered stars using their exact coordinates encoded as three pairs of base-36 digits (0-9, A-Z). Example: star at (123, 456, 789) → "3FCOLX". Fits exactly within the game's 6-character player name limit (by design!). Include a decoder to convert base-36 names back to coordinates for stars not yet in the database.
