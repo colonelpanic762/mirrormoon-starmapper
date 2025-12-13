@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from starmapper import Star, parse_coordinates, distance
+from starmapper import Star, parse_coordinates, distance, show_map, plot_star_map
 
 
 def load_stars(data_path: Path) -> list[Star]:
@@ -15,7 +15,7 @@ def load_stars(data_path: Path) -> list[Star]:
 
     stars = []
     for star_data in data.get("stars", []):
-        stars.append(Star(
+        star = Star(
             coordinates=star_data.get("coordinates"),
             original_name=star_data.get("original_name"),
             player_name=star_data.get("player_name"),
@@ -24,7 +24,11 @@ def load_stars(data_path: Path) -> list[Star]:
             observatory_active=star_data.get("observatory_active"),
             anomaly_visible=star_data.get("anomaly_visible"),
             notes=star_data.get("notes"),
-        ))
+        )
+        # Handle detector field (not in dataclass, stored as attribute)
+        if star_data.get("has_detector"):
+            star.has_detector = True
+        stars.append(star)
 
     return stars
 
@@ -36,6 +40,21 @@ def main():
         type=Path,
         default=Path("data/stars.json"),
         help="Path to star data JSON file",
+    )
+    parser.add_argument(
+        "--visualize", "-v",
+        action="store_true",
+        help="Show 3D visualization of star map",
+    )
+    parser.add_argument(
+        "--no-labels",
+        action="store_true",
+        help="Hide star labels in visualization (except observatories)",
+    )
+    parser.add_argument(
+        "--save",
+        type=Path,
+        help="Save visualization to file instead of displaying (e.g., --save map.png)",
     )
     args = parser.parse_args()
 
@@ -69,6 +88,17 @@ def main():
         s1, s2 = stars_with_coords[0], stars_with_coords[1]
         d = distance(s1, s2)
         print(f"\nDistance between {s1.display_name} and {s2.display_name}: {d:.2f}")
+
+    # Show or save 3D visualization if requested
+    if args.visualize or args.save:
+        fig = plot_star_map(stars, show_labels=not args.no_labels)
+        if args.save:
+            fig.savefig(args.save, dpi=150, bbox_inches='tight')
+            print(f"\nVisualization saved to: {args.save}")
+        else:
+            print("\nLaunching 3D visualization...")
+            import matplotlib.pyplot as plt
+            plt.show()
 
     return 0
 

@@ -148,10 +148,11 @@
       "coordinates": "590949307",
       "original_name": "HXU/00",
       "player_name": "OBS1",
-      "discovered_by_user": false,
-      "has_observatory": null,
-      "observatory_active": null,
-      "anomaly_visible": null
+      "discovered_by_user": true,
+      "has_observatory": true,
+      "observatory_active": true,
+      "anomaly_visible": true,
+      "notes": "Second confirmed observatory. Anomaly very close to AUT56 (11 o'clock), GIOVAN at 4 o'clock. Anomaly just right of GIOVAN→AUT56 line, 7-10x closer to AUT56 than GIOVAN."
     },
     {
       "coordinates": "591584428",
@@ -163,8 +164,8 @@
       "anomaly_visible": true
     },
     {
-      "coordinates": null,
-      "original_name": null,
+      "coordinates": "205525860",
+      "original_name": "IHT/00",
       "player_name": "ETHAN",
       "discovered_by_user": false,
       "has_observatory": null,
@@ -173,18 +174,18 @@
       "notes": "Reference star near anomaly (from OBS007 view)"
     },
     {
-      "coordinates": null,
+      "coordinates": "092690459",
       "original_name": "AJY/95",
       "player_name": null,
       "discovered_by_user": false,
       "has_observatory": null,
       "observatory_active": null,
       "anomaly_visible": null,
-      "notes": "Reference star near anomaly (from OBS007 view). Approx region: (0xx, 6xx, 4xx)"
+      "notes": "Reference star near anomaly (from OBS007 view)"
     },
     {
-      "coordinates": null,
-      "original_name": null,
+      "coordinates": "175848483",
+      "original_name": "ETY/00",
       "player_name": "ULIGY",
       "discovered_by_user": false,
       "has_observatory": null,
@@ -193,14 +194,25 @@
       "notes": "Reference star near anomaly (from OBS007 view)"
     },
     {
-      "coordinates": null,
-      "original_name": null,
+      "coordinates": "297927558",
+      "original_name": "IXH/00",
       "player_name": "GIOVAN",
       "discovered_by_user": false,
       "has_observatory": null,
       "observatory_active": null,
       "anomaly_visible": null,
       "notes": "Reference star near anomaly (from OBS007 view)"
+    },
+    {
+      "coordinates": "015712838",
+      "original_name": "ALT/00",
+      "player_name": "OBSV",
+      "discovered_by_user": true,
+      "has_observatory": false,
+      "has_detector": true,
+      "observatory_active": null,
+      "anomaly_visible": true,
+      "notes": "Detector only (no star labels/constellations). Anomaly in dense star region from this angle. Near corner of cluster."
     },
     {
       "coordinates": null,
@@ -213,14 +225,14 @@
       "notes": "Visible from OBS007. Approx region: (5xx, 8xx, 8xx)"
     },
     {
-      "coordinates": null,
+      "coordinates": "695685686",
       "original_name": "JJJ/40",
-      "player_name": null,
-      "discovered_by_user": false,
-      "has_observatory": null,
-      "observatory_active": null,
-      "anomaly_visible": null,
-      "notes": "Visible from OBS007. Approx region: (6xx, 6xx, 6xx)"
+      "player_name": "PIPES",
+      "discovered_by_user": true,
+      "has_observatory": false,
+      "observatory_active": false,
+      "anomaly_visible": false,
+      "notes": "Visible from OBS007. Simple puzzle, no manipulator. Building-shaped POI made of pipes."
     },
     {
       "coordinates": null,
@@ -281,6 +293,126 @@
       "observatory_active": null,
       "anomaly_visible": null,
       "notes": "Visible from OBS007. Approx region: (1xx, 1xx, 5xx)"
+    },
+    {
+      "coordinates": null,
+      "original_name": null,
+      "player_name": "AUT56",
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Reference star VERY close to anomaly (from OBS1 view, 11 o'clock)"
+    },
+    {
+      "coordinates": "043357429",
+      "original_name": "AUY/14",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBS1 (~12 o'clock)"
+    },
+    {
+      "coordinates": "167034410",
+      "original_name": "EAY/00",
+      "player_name": "DAV21",
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBS1 (11 o'clock)"
+    },
+    {
+      "coordinates": null,
+      "original_name": "UAT/02",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBS1 (9 o'clock). Approx region: (3xx, 0xx, 8xx)"
+    },
+    {
+      "coordinates": "624519045",
+      "original_name": "JHA/88",
+      "player_name": "AZURIA",
+      "discovered_by_user": true,
+      "has_observatory": false,
+      "observatory_active": false,
+      "anomaly_visible": false,
+      "notes": "Near OBSERV. Had manipulator (1 part), needed for exit. No hidden observatory."
+    },
+    {
+      "coordinates": "639502146",
+      "original_name": "JHA/00",
+      "player_name": "OBSERV",
+      "discovered_by_user": true,
+      "has_observatory": true,
+      "observatory_active": true,
+      "anomaly_visible": true,
+      "notes": "Hidden observatory - required manipulator with all 3 slots. Near AZURIA. Third confirmed observatory with anomaly visibility. Anomaly slightly closer to UMA than VOID6, slightly right of line connecting them."
+    },
+    {
+      "coordinates": null,
+      "original_name": null,
+      "player_name": "UMA",
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBSERV, near anomaly"
+    },
+    {
+      "coordinates": null,
+      "original_name": null,
+      "player_name": "VOID6",
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBSERV, near anomaly"
+    },
+    {
+      "coordinates": null,
+      "original_name": null,
+      "player_name": "DERVOT",
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBSERV"
+    },
+    {
+      "coordinates": null,
+      "original_name": null,
+      "player_name": "KLORIA",
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBSERV"
+    },
+    {
+      "coordinates": null,
+      "original_name": "HAY/53",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBSERV. Approx region: (5xx, 0xx, 4xx)"
+    },
+    {
+      "coordinates": null,
+      "original_name": "UTA/99",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "Visible from OBSERV. Approx region: (3xx, 8xx, 0xx)"
     }
   ],
   "observations": []
