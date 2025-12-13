@@ -100,6 +100,16 @@ def main():
         default=0.0,
         help="View roll in degrees (default: 0)",
     )
+    parser.add_argument(
+        "--flip-horizontal",
+        action="store_true",
+        help="Mirror the view horizontally",
+    )
+    parser.add_argument(
+        "--flip-vertical",
+        action="store_true",
+        help="Mirror the view vertically",
+    )
     args = parser.parse_args()
 
     if not args.data.exists():
@@ -170,6 +180,8 @@ def main():
             center_elevation=el_rad,
             rotation=rot_rad,
             show_labels=not args.no_labels,
+            flip_horizontal=args.flip_horizontal,
+            flip_vertical=args.flip_vertical,
         )
 
         if args.save:

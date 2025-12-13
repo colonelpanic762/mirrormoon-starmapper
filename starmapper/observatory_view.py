@@ -27,6 +27,8 @@ def plot_observatory_view(
     anomaly_position: tuple[float, float] | None = None,
     fov_radius: float = 2.0,
     figsize: tuple[int, int] = (12, 10),
+    flip_horizontal: bool = False,
+    flip_vertical: bool = False,
 ) -> plt.Figure:
     """Create a 2D star chart showing the sky from an observatory.
 
@@ -48,6 +50,18 @@ def plot_observatory_view(
     projected = project_stars_from_observer(
         observer, stars, center_azimuth, center_elevation, rotation
     )
+
+    # Apply flips if requested (models viewing same sky from different moon positions)
+    if flip_horizontal or flip_vertical:
+        projected = [
+            (star, ChartPosition(
+                x=-pos.x if flip_horizontal else pos.x,
+                y=-pos.y if flip_vertical else pos.y,
+                visible=pos.visible,
+                distance=pos.distance
+            ))
+            for star, pos in projected
+        ]
 
     # Create figure with dark background
     fig, ax = plt.subplots(figsize=figsize, facecolor='#0d0d1a')
