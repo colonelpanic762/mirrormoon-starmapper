@@ -152,7 +152,7 @@
       "has_observatory": true,
       "observatory_active": true,
       "anomaly_visible": true,
-      "notes": "Second confirmed observatory. Anomaly very close to AUT56 (11 o'clock), GIOVAN at 4 o'clock. Anomaly just right of GIOVAN→AUT56 line, 7-10x closer to AUT56 than GIOVAN."
+      "notes": "Second confirmed observatory. Anomaly very close to AUT56 (11 o'clock), GIOVAN at 4 o'clock. Anomaly just right of GIOVAN\u2192AUT56 line, 7-10x closer to AUT56 than GIOVAN."
     },
     {
       "coordinates": "591584428",
@@ -415,5 +415,42 @@
       "notes": "Visible from OBSERV. Approx region: (3xx, 8xx, 0xx)"
     }
   ],
-  "observations": []
+  "observations": [
+    {
+      "id": "f96769d7-61a5-4ee1-81a4-b8a4afb46b6f",
+      "observer_coordinates": "590949307",
+      "direction_vector": [
+        -0.6634300775249884,
+        -0.6334864331679927,
+        0.3981902450177331
+      ],
+      "cone_half_angle": 0.10020292951643663,
+      "timestamp": "2025-12-13T15:22:40.817948Z",
+      "view_state": {
+        "azimuth": 3.141592653589793,
+        "elevation": -0.5235987755982988,
+        "rotation": 1.5707963267948966,
+        "flip_horizontal": true,
+        "flip_vertical": false
+      }
+    },
+    {
+      "id": "bfc233f9-1884-45f5-a56e-172b1ae84d33",
+      "observer_coordinates": "591584428",
+      "direction_vector": [
+        -0.8436676561657183,
+        0.2676296941284252,
+        0.4654022268539002
+      ],
+      "cone_half_angle": 0.0744271968711029,
+      "timestamp": "2025-12-13T16:05:33.263961Z",
+      "view_state": {
+        "azimuth": 1.5707963267948966,
+        "elevation": 0.7853981633974483,
+        "rotation": 4.014257279586958,
+        "flip_horizontal": false,
+        "flip_vertical": true
+      }
+    }
+  ]
 }

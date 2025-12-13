@@ -4,7 +4,8 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 
-from .coords import Star
+from .coords import Star, Observation
+from .triangulation import TriangulationResult
 
 
 def plot_star_map(stars: list[Star],
@@ -124,3 +125,184 @@ def show_map(stars: list[Star], **kwargs):
     """Plot and display the star map interactively."""
     plot_star_map(stars, **kwargs)
     plt.show()
+
+
+def plot_observation_cones(
+    ax: Axes3D,
+    observations: list[Observation],
+    cone_length: float = 500.0,
+    segments: int = 24,
+) -> None:
+    """Draw wireframe cones representing observation directions and uncertainties.
+
+    Args:
+        ax: 3D matplotlib axes
+        observations: List of observations to visualize
+        cone_length: Length of cone from apex (observer) in coordinate units
+        segments: Number of segments for the circular base
+    """
+    for i, obs in enumerate(observations):
+        origin = obs.origin
+        direction = obs.direction
+        half_angle = obs.cone_half_angle
+
+        # Generate cone wireframe
+        _draw_cone(ax, origin, direction, half_angle, cone_length, segments,
+                   color=_get_observation_color(i), alpha=0.6)
+
+
+def _draw_cone(
+    ax: Axes3D,
+    apex: np.ndarray,
+    direction: np.ndarray,
+    half_angle: float,
+    length: float,
+    segments: int,
+    color: str = 'cyan',
+    alpha: float = 0.5,
+) -> None:
+    """Draw a wireframe cone in 3D.
+
+    The cone has its apex at 'apex', extends in 'direction' for 'length',
+    with opening angle 'half_angle'.
+    """
+    # Create orthonormal basis with direction as z-axis
+    # Find a vector not parallel to direction
+    if abs(direction[0]) < 0.9:
+        perp1 = np.cross(direction, np.array([1, 0, 0]))
+    else:
+        perp1 = np.cross(direction, np.array([0, 1, 0]))
+    perp1 = perp1 / np.linalg.norm(perp1)
+    perp2 = np.cross(direction, perp1)
+
+    # Radius at the base of the cone
+    radius = length * np.tan(half_angle)
+
+    # Generate points on the circular base
+    angles = np.linspace(0, 2 * np.pi, segments + 1)
+    base_center = apex + direction * length
+
+    base_points = []
+    for angle in angles:
+        point = base_center + radius * (np.cos(angle) * perp1 + np.sin(angle) * perp2)
+        base_points.append(point)
+
+    base_points = np.array(base_points)
+
+    # Draw the circular base
+    ax.plot3D(base_points[:, 0], base_points[:, 1], base_points[:, 2],
+              color=color, alpha=alpha, linewidth=1)
+
+    # Draw lines from apex to base (generators)
+    for i in range(0, segments, max(1, segments // 8)):
+        ax.plot3D([apex[0], base_points[i, 0]],
+                  [apex[1], base_points[i, 1]],
+                  [apex[2], base_points[i, 2]],
+                  color=color, alpha=alpha * 0.7, linewidth=0.5)
+
+    # Draw the central ray
+    ax.plot3D([apex[0], base_center[0]],
+              [apex[1], base_center[1]],
+              [apex[2], base_center[2]],
+              color=color, alpha=alpha, linewidth=1.5, linestyle='--')
+
+
+def plot_triangulation_result(
+    ax: Axes3D,
+    result: TriangulationResult,
+) -> None:
+    """Mark the estimated anomaly position with a marker and confidence sphere.
+
+    Args:
+        ax: 3D matplotlib axes
+        result: Triangulation result to visualize
+    """
+    pos = result.estimated_position
+
+    # Plot the estimated position as a prominent X marker
+    ax.scatter([pos[0]], [pos[1]], [pos[2]],
+               c='magenta', s=200, marker='X', alpha=1.0,
+               label=f'Estimated: {result.coordinate_string}', zorder=10)
+
+    # Draw confidence sphere as wireframe
+    _draw_sphere_wireframe(ax, pos, result.confidence_radius,
+                           color='magenta', alpha=0.3)
+
+    # Add text label
+    ax.text(pos[0], pos[1], pos[2] + result.confidence_radius + 20,
+            f'  {result.coordinate_string}\n  ±{result.confidence_radius:.0f}',
+            fontsize=9, color='magenta', fontweight='bold')
+
+
+def _draw_sphere_wireframe(
+    ax: Axes3D,
+    center: np.ndarray,
+    radius: float,
+    color: str = 'magenta',
+    alpha: float = 0.3,
+    resolution: int = 16,
+) -> None:
+    """Draw a wireframe sphere."""
+    # Generate sphere wireframe
+    u = np.linspace(0, 2 * np.pi, resolution)
+    v = np.linspace(0, np.pi, resolution // 2)
+
+    # Draw latitude lines
+    for vi in v:
+        x = center[0] + radius * np.sin(vi) * np.cos(u)
+        y = center[1] + radius * np.sin(vi) * np.sin(u)
+        z = center[2] + radius * np.cos(vi) * np.ones_like(u)
+        ax.plot3D(x, y, z, color=color, alpha=alpha, linewidth=0.5)
+
+    # Draw longitude lines
+    for ui in u[::4]:  # Every 4th longitude line
+        x = center[0] + radius * np.sin(v) * np.cos(ui)
+        y = center[1] + radius * np.sin(v) * np.sin(ui)
+        z = center[2] + radius * np.cos(v)
+        ax.plot3D(x, y, z, color=color, alpha=alpha, linewidth=0.5)
+
+
+def _get_observation_color(index: int) -> str:
+    """Get a distinct color for each observation."""
+    colors = ['cyan', 'yellow', 'lime', 'orange', 'pink', 'lightblue']
+    return colors[index % len(colors)]
+
+
+def plot_star_map_with_observations(
+    stars: list[Star],
+    observations: list[Observation] | None = None,
+    result: TriangulationResult | None = None,
+    show_labels: bool = True,
+    figsize: tuple[int, int] = (14, 12),
+) -> plt.Figure:
+    """Create a combined 3D view with stars, observation cones, and triangulation result.
+
+    Args:
+        stars: List of Star objects
+        observations: Optional list of observations to show as cones
+        result: Optional triangulation result to mark
+        show_labels: Whether to show star labels
+        figsize: Figure size
+
+    Returns:
+        matplotlib Figure object
+    """
+    fig = plot_star_map(stars, show_labels=show_labels, figsize=figsize)
+    ax = fig.axes[0]
+
+    if observations:
+        plot_observation_cones(ax, observations)
+
+    if result:
+        plot_triangulation_result(ax, result)
+        ax.legend(loc='upper left')
+
+    # Update title
+    title = 'MirrorMoon EP - Star Map'
+    if observations:
+        title += f' ({len(observations)} observations)'
+    if result:
+        title += ' [TRIANGULATED]'
+    ax.set_title(title)
+
+    return fig

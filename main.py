@@ -9,11 +9,16 @@ import numpy as np
 
 from starmapper import (
     Star,
+    Observation,
     parse_coordinates,
     distance,
     show_map,
     plot_star_map,
     plot_observatory_view,
+    create_interactive_observatory_view,
+    plot_star_map_with_observations,
+    triangulate,
+    format_result,
 )
 
 
@@ -51,6 +56,51 @@ def load_stars(data_path: Path) -> list[Star]:
         stars.append(star)
 
     return stars
+
+
+def load_observations(data_path: Path) -> list[Observation]:
+    """Load observations from the JSON data file."""
+    with open(data_path) as f:
+        data = json.load(f)
+
+    observations = []
+    for obs_data in data.get("observations", []):
+        observations.append(Observation.from_dict(obs_data))
+
+    return observations
+
+
+def save_observation(data_path: Path, observation: Observation) -> None:
+    """Append a new observation to the JSON data file."""
+    with open(data_path) as f:
+        data = json.load(f)
+
+    if "observations" not in data:
+        data["observations"] = []
+
+    data["observations"].append(observation.to_dict())
+
+    # Write atomically (write to temp, then rename)
+    temp_path = data_path.with_suffix('.json.tmp')
+    with open(temp_path, 'w') as f:
+        json.dump(data, f, indent=2)
+    temp_path.rename(data_path)
+
+
+def clear_all_observations(data_path: Path) -> int:
+    """Remove all observations. Returns count deleted."""
+    with open(data_path) as f:
+        data = json.load(f)
+
+    count = len(data.get("observations", []))
+    data["observations"] = []
+
+    temp_path = data_path.with_suffix('.json.tmp')
+    with open(temp_path, 'w') as f:
+        json.dump(data, f, indent=2)
+    temp_path.rename(data_path)
+
+    return count
 
 
 def main():
@@ -110,6 +160,39 @@ def main():
         action="store_true",
         help="Mirror the view vertically",
     )
+    # Interactive and triangulation arguments
+    parser.add_argument(
+        "--interactive", "-i",
+        action="store_true",
+        help="Enable click-to-observe mode (requires --observatory)",
+    )
+    parser.add_argument(
+        "--triangulate", "-t",
+        action="store_true",
+        help="Run triangulation on stored observations",
+    )
+    parser.add_argument(
+        "--method",
+        type=str,
+        choices=["closest_approach", "ray_intersection"],
+        default="closest_approach",
+        help="Triangulation algorithm (default: closest_approach)",
+    )
+    parser.add_argument(
+        "--show-cones",
+        action="store_true",
+        help="Show observation cones in 3D visualization",
+    )
+    parser.add_argument(
+        "--list-observations",
+        action="store_true",
+        help="List all stored observations",
+    )
+    parser.add_argument(
+        "--clear-observations",
+        action="store_true",
+        help="Delete all stored observations",
+    )
     args = parser.parse_args()
 
     if not args.data.exists():
@@ -143,9 +226,60 @@ def main():
         d = distance(s1, s2)
         print(f"\nDistance between {s1.display_name} and {s2.display_name}: {d:.2f}")
 
-    # Show or save 3D visualization if requested
-    if args.visualize or (args.save and not args.observatory):
-        fig = plot_star_map(stars, show_labels=not args.no_labels)
+    # Handle observation management flags
+    if args.clear_observations:
+        count = clear_all_observations(args.data)
+        print(f"\nCleared {count} observations")
+        return 0
+
+    if args.list_observations:
+        observations = load_observations(args.data)
+        if not observations:
+            print("\nNo observations stored")
+        else:
+            print(f"\n== Stored Observations ({len(observations)}) ==")
+            for obs in observations:
+                deg = np.degrees(obs.cone_half_angle)
+                print(f"  [{obs.id[:8]}...] From {obs.observer_coordinates} | "
+                      f"Half-angle: {deg:.1f}° | {obs.timestamp}")
+        return 0
+
+    # Handle triangulation
+    if args.triangulate:
+        observations = load_observations(args.data)
+        if len(observations) < 2:
+            print(f"\nNeed at least 2 observations for triangulation (have {len(observations)})")
+            return 1
+
+        print(f"\n== Triangulating from {len(observations)} observations ==")
+        result = triangulate(observations, method=args.method)
+        print(format_result(result))
+
+        # Show visualization if requested
+        if args.visualize or args.show_cones:
+            print("\nLaunching 3D visualization with cones...")
+            fig = plot_star_map_with_observations(
+                stars,
+                observations=observations,
+                result=result,
+                show_labels=not args.no_labels,
+            )
+            if args.save:
+                fig.savefig(args.save, dpi=150, bbox_inches='tight')
+                print(f"Visualization saved to: {args.save}")
+            else:
+                import matplotlib.pyplot as plt
+                plt.show()
+        return 0
+
+    # Show or save 3D visualization if requested (with optional cones)
+    if args.visualize or args.show_cones or (args.save and not args.observatory):
+        observations = load_observations(args.data) if args.show_cones else None
+        fig = plot_star_map_with_observations(
+            stars,
+            observations=observations,
+            show_labels=not args.no_labels,
+        )
         if args.save:
             fig.savefig(args.save, dpi=150, bbox_inches='tight')
             print(f"\nVisualization saved to: {args.save}")
@@ -173,16 +307,44 @@ def main():
         el_rad = np.radians(args.elevation)
         rot_rad = np.radians(args.rotation)
 
-        fig = plot_observatory_view(
-            observer=observer,
-            stars=stars,
-            center_azimuth=az_rad,
-            center_elevation=el_rad,
-            rotation=rot_rad,
-            show_labels=not args.no_labels,
-            flip_horizontal=args.flip_horizontal,
-            flip_vertical=args.flip_vertical,
-        )
+        if args.interactive:
+            # Interactive mode: click to record observations
+            print("\n[INTERACTIVE MODE]")
+            print("  1. Click to mark anomaly center")
+            print("  2. Click again to set uncertainty radius")
+            print("  Observation will auto-save to data file\n")
+
+            def on_observation_complete(observation):
+                save_observation(args.data, observation)
+                deg = np.degrees(observation.cone_half_angle)
+                print(f"\n✓ Observation saved!")
+                print(f"  ID: {observation.id}")
+                print(f"  Direction: ({observation.direction_vector[0]:.3f}, "
+                      f"{observation.direction_vector[1]:.3f}, {observation.direction_vector[2]:.3f})")
+                print(f"  Cone half-angle: {deg:.1f}°")
+
+            fig, state = create_interactive_observatory_view(
+                observer=observer,
+                stars=stars,
+                center_azimuth=az_rad,
+                center_elevation=el_rad,
+                rotation=rot_rad,
+                flip_horizontal=args.flip_horizontal,
+                flip_vertical=args.flip_vertical,
+                on_observation_complete=on_observation_complete,
+            )
+        else:
+            # Non-interactive view
+            fig = plot_observatory_view(
+                observer=observer,
+                stars=stars,
+                center_azimuth=az_rad,
+                center_elevation=el_rad,
+                rotation=rot_rad,
+                show_labels=not args.no_labels,
+                flip_horizontal=args.flip_horizontal,
+                flip_vertical=args.flip_vertical,
+            )
 
         if args.save:
             fig.savefig(args.save, dpi=150, bbox_inches='tight', facecolor='#0d0d1a')

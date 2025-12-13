@@ -8,13 +8,41 @@ white/colored stars.
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
+from enum import Enum, auto
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Callable, Any
+import uuid
 
-from .coords import Star
+from .coords import Star, Observation
 from .projection import (
     project_stars_from_observer,
+    chart_to_direction,
     ChartPosition,
     ViewState,
 )
+
+
+class ClickState(Enum):
+    """State machine for interactive observation mode."""
+    WAITING_FIRST_CLICK = auto()   # Ready for anomaly direction click
+    WAITING_SECOND_CLICK = auto()  # Ready for uncertainty radius click
+    OBSERVATION_COMPLETE = auto()  # Done, observation recorded
+
+
+@dataclass
+class InteractiveState:
+    """Tracks state during interactive observation mode."""
+    click_state: ClickState = ClickState.WAITING_FIRST_CLICK
+    first_click_pos: tuple[float, float] | None = None
+    first_click_direction: np.ndarray | None = None
+    preview_radius: float = 0.0
+    observation: Observation | None = None
+
+    # Visual elements for cleanup
+    markers: list[Any] = field(default_factory=list)
+    preview_circle: Any = None
+    status_text: Any = None
 
 
 def plot_observatory_view(
@@ -250,3 +278,275 @@ def show_observatory_view(
     """Plot and display the observatory view interactively."""
     plot_observatory_view(observer, stars, **kwargs)
     plt.show()
+
+
+def _calculate_angular_distance(
+    pos1: tuple[float, float],
+    pos2: tuple[float, float],
+    azimuth: float,
+    elevation: float,
+    rotation: float,
+    flip_horizontal: bool,
+    flip_vertical: bool,
+) -> float:
+    """Calculate angular distance between two chart positions in radians.
+
+    Converts both chart positions to 3D direction vectors, then computes
+    the angle between them using the dot product.
+    """
+    # Account for flips when converting back to directions
+    x1, y1 = pos1
+    x2, y2 = pos2
+    if flip_horizontal:
+        x1, x2 = -x1, -x2
+    if flip_vertical:
+        y1, y2 = -y1, -y2
+
+    dir1 = chart_to_direction(x1, y1, azimuth, elevation, rotation)
+    dir2 = chart_to_direction(x2, y2, azimuth, elevation, rotation)
+
+    # Angle between unit vectors
+    dot = np.clip(np.dot(dir1, dir2), -1.0, 1.0)
+    return float(np.arccos(dot))
+
+
+def _update_status_text(ax: plt.Axes, state: InteractiveState, text: str) -> None:
+    """Update the status text displayed on the chart."""
+    if state.status_text is not None:
+        state.status_text.remove()
+
+    state.status_text = ax.text(
+        0.5, 0.02,
+        text,
+        transform=ax.transAxes,
+        ha='center',
+        va='bottom',
+        fontsize=10,
+        color='#88ff88',
+        bbox=dict(boxstyle='round', facecolor='#1a1a2e', edgecolor='#88ff88', alpha=0.8)
+    )
+
+
+def _add_crosshair_marker(ax: plt.Axes, state: InteractiveState, x: float, y: float) -> None:
+    """Add a crosshair marker at the clicked position."""
+    size = 0.1
+    # Horizontal line
+    h_line = ax.plot([x - size, x + size], [y, y], color='#88ff88', linewidth=2, zorder=10)[0]
+    # Vertical line
+    v_line = ax.plot([x, x], [y - size, y + size], color='#88ff88', linewidth=2, zorder=10)[0]
+    # Center dot
+    dot = ax.scatter([x], [y], c='#88ff88', s=30, zorder=11)
+
+    state.markers.extend([h_line, v_line, dot])
+
+
+def _update_preview_circle(ax: plt.Axes, state: InteractiveState, radius: float) -> None:
+    """Update the preview circle showing uncertainty radius."""
+    if state.preview_circle is not None:
+        state.preview_circle.remove()
+
+    if state.first_click_pos is not None and radius > 0:
+        x, y = state.first_click_pos
+        state.preview_circle = patches.Circle(
+            (x, y),
+            radius=radius,
+            fill=False,
+            color='#ffff88',
+            linewidth=1.5,
+            linestyle='--',
+            alpha=0.7,
+            zorder=9
+        )
+        ax.add_patch(state.preview_circle)
+
+
+def create_interactive_observatory_view(
+    observer: Star,
+    stars: list[Star],
+    center_azimuth: float = 0.0,
+    center_elevation: float = np.pi / 4,
+    rotation: float = 0.0,
+    flip_horizontal: bool = False,
+    flip_vertical: bool = False,
+    fov_radius: float = 2.0,
+    on_observation_complete: Callable[[Observation], None] | None = None,
+) -> tuple[plt.Figure, InteractiveState]:
+    """Create an interactive observatory view for recording observations.
+
+    Two-click workflow:
+    1. First click marks the anomaly direction (center of uncertainty cone)
+    2. Second click sets the uncertainty radius (cone half-angle)
+
+    Args:
+        observer: Observatory star location
+        stars: All stars to potentially display
+        center_azimuth: Horizontal viewing direction (radians)
+        center_elevation: Vertical viewing direction (radians)
+        rotation: Roll rotation of the view (radians)
+        flip_horizontal: Mirror the view horizontally
+        flip_vertical: Mirror the view vertically
+        fov_radius: Field of view radius in projection units
+        on_observation_complete: Callback when observation is recorded
+
+    Returns:
+        Tuple of (figure, interactive_state)
+    """
+    # Create the base view
+    fig = plot_observatory_view(
+        observer=observer,
+        stars=stars,
+        center_azimuth=center_azimuth,
+        center_elevation=center_elevation,
+        rotation=rotation,
+        show_labels=True,
+        fov_radius=fov_radius,
+        flip_horizontal=flip_horizontal,
+        flip_vertical=flip_vertical,
+    )
+
+    ax = fig.axes[0]
+    state = InteractiveState()
+
+    # Store view parameters for direction calculation
+    view_params = {
+        'azimuth': center_azimuth,
+        'elevation': center_elevation,
+        'rotation': rotation,
+        'flip_horizontal': flip_horizontal,
+        'flip_vertical': flip_vertical,
+    }
+
+    # Initial status text
+    _update_status_text(ax, state, "Click to mark anomaly center")
+
+    def on_click(event):
+        """Handle mouse click events."""
+        # Ignore clicks when toolbar tools (zoom/pan) are active
+        toolbar = fig.canvas.manager.toolbar
+        if toolbar is not None and toolbar.mode != '':
+            return
+
+        # Only respond to left-click
+        if event.button != 1:
+            return
+
+        if event.inaxes != ax:
+            return
+
+        x, y = event.xdata, event.ydata
+
+        if state.click_state == ClickState.WAITING_FIRST_CLICK:
+            # First click: mark anomaly direction
+            state.first_click_pos = (x, y)
+
+            # Convert chart position to direction vector (accounting for flips)
+            chart_x = -x if flip_horizontal else x
+            chart_y = -y if flip_vertical else y
+            state.first_click_direction = chart_to_direction(
+                chart_x, chart_y, center_azimuth, center_elevation, rotation
+            )
+
+            # Visual feedback
+            _add_crosshair_marker(ax, state, x, y)
+            _update_status_text(ax, state, "Click to set uncertainty radius")
+
+            state.click_state = ClickState.WAITING_SECOND_CLICK
+            fig.canvas.draw_idle()
+
+        elif state.click_state == ClickState.WAITING_SECOND_CLICK:
+            # Second click: set uncertainty radius
+            angular_distance = _calculate_angular_distance(
+                state.first_click_pos,
+                (x, y),
+                **view_params
+            )
+
+            # Create the observation
+            observation = Observation(
+                id=str(uuid.uuid4()),
+                observer_coordinates=observer.coordinates,
+                direction_vector=tuple(state.first_click_direction),
+                cone_half_angle=angular_distance,
+                timestamp=datetime.utcnow().isoformat() + "Z",
+                view_state={
+                    'azimuth': center_azimuth,
+                    'elevation': center_elevation,
+                    'rotation': rotation,
+                    'flip_horizontal': flip_horizontal,
+                    'flip_vertical': flip_vertical,
+                }
+            )
+
+            state.observation = observation
+            state.click_state = ClickState.OBSERVATION_COMPLETE
+
+            # Final visual: solid circle for recorded observation
+            if state.preview_circle is not None:
+                state.preview_circle.remove()
+
+            final_circle = patches.Circle(
+                state.first_click_pos,
+                radius=_angular_to_chart_radius(angular_distance, fov_radius),
+                fill=False,
+                color='#88ff88',
+                linewidth=2,
+                zorder=9
+            )
+            ax.add_patch(final_circle)
+            state.markers.append(final_circle)
+
+            # Update status
+            degrees = np.degrees(angular_distance)
+            _update_status_text(
+                ax, state,
+                f"✓ Observation recorded (cone half-angle: {degrees:.1f}°)"
+            )
+
+            fig.canvas.draw_idle()
+
+            # Callback
+            if on_observation_complete is not None:
+                on_observation_complete(observation)
+
+    def on_motion(event):
+        """Handle mouse motion for preview circle."""
+        if state.click_state != ClickState.WAITING_SECOND_CLICK:
+            return
+        if event.inaxes != ax:
+            return
+
+        x, y = event.xdata, event.ydata
+
+        # Calculate angular distance from first click
+        angular_distance = _calculate_angular_distance(
+            state.first_click_pos,
+            (x, y),
+            **view_params
+        )
+
+        # Convert angular distance to chart radius for preview
+        chart_radius = _angular_to_chart_radius(angular_distance, fov_radius)
+        _update_preview_circle(ax, state, chart_radius)
+
+        # Update status with current angle
+        degrees = np.degrees(angular_distance)
+        _update_status_text(ax, state, f"Uncertainty radius: {degrees:.1f}° (click to confirm)")
+
+        fig.canvas.draw_idle()
+
+    # Connect event handlers
+    fig.canvas.mpl_connect('button_press_event', on_click)
+    fig.canvas.mpl_connect('motion_notify_event', on_motion)
+
+    return fig, state
+
+
+def _angular_to_chart_radius(angular_distance: float, fov_radius: float) -> float:
+    """Convert angular distance (radians) to chart radius.
+
+    This is approximate - assumes roughly linear mapping near center.
+    For stereographic projection, small angles map approximately linearly.
+    """
+    # The FOV radius of 2.0 corresponds to roughly 90 degrees (pi/2)
+    # So 1 radian ≈ 2.0 / (pi/2) ≈ 1.27 chart units
+    return angular_distance * (fov_radius / (np.pi / 2))

@@ -54,6 +54,58 @@ class Star:
         return self.player_name or self.original_name or "(unnamed)"
 
 
+@dataclass
+class Observation:
+    """A single observation of the anomaly from an observatory.
+
+    Records the direction toward the anomaly and the uncertainty cone angle,
+    along with metadata for reproducibility.
+    """
+
+    observer_coordinates: str  # 9-digit coordinate string of the observatory
+    direction_vector: tuple[float, float, float]  # Unit vector toward anomaly
+    cone_half_angle: float  # Uncertainty radius in radians
+    timestamp: str  # ISO 8601 format (e.g., "2024-01-15T14:30:00Z")
+    id: str | None = None  # UUID for unique identification
+    view_state: dict | None = None  # azimuth, elevation, rotation, flips
+
+    @property
+    def origin(self) -> np.ndarray | None:
+        """Return observer position as numpy array."""
+        if self.observer_coordinates is None:
+            return None
+        x, y, z = parse_coordinates(self.observer_coordinates)
+        return np.array([x, y, z], dtype=np.float64)
+
+    @property
+    def direction(self) -> np.ndarray:
+        """Return direction as numpy array."""
+        return np.array(self.direction_vector, dtype=np.float64)
+
+    def to_dict(self) -> dict:
+        """Serialize for JSON storage."""
+        return {
+            "id": self.id,
+            "observer_coordinates": self.observer_coordinates,
+            "direction_vector": list(self.direction_vector),
+            "cone_half_angle": self.cone_half_angle,
+            "timestamp": self.timestamp,
+            "view_state": self.view_state,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Observation":
+        """Deserialize from JSON storage."""
+        return cls(
+            id=data.get("id"),
+            observer_coordinates=data["observer_coordinates"],
+            direction_vector=tuple(data["direction_vector"]),
+            cone_half_angle=data["cone_half_angle"],
+            timestamp=data["timestamp"],
+            view_state=data.get("view_state"),
+        )
+
+
 def parse_coordinates(coord_string: str) -> Tuple[int, int, int]:
     """Parse a 9-digit coordinate string into (x, y, z) tuple.
 
