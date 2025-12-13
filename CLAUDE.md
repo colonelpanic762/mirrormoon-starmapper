@@ -148,6 +148,30 @@ Located next to star display, shows (unlabeled):
 
 *Note: Like all MirrorMoon EP interfaces, nothing is labeled—players discover meanings through experimentation.*
 
+### Ship Star Map Display
+- Flat rectangular screen with center crosshair for star selection
+- Ship position shown as **diamond** marker
+- Selected star shown with **circle** outline
+- Star size indicates distance (larger = closer, smaller = farther)
+- Can view any star in the cluster via pan/rotate combinations
+
+**Controls:**
+1. **Panning** — moves the camera/cursor position (not the ship itself)
+2. **Rotation** — physically rotates the ship, which rotates the view
+   - Up (↑) = pitch up (raise head)
+   - Down (↓) = pitch down (lower head)
+   - Right (→) = yaw LEFT (inverted, like flight controls)
+   - Left (←) = yaw RIGHT (inverted)
+   - Rotation pivot is always the ship's position
+3. **Forward-only toggle** — unlocked after finding first observatory
+   - OFF: All stars visible; rotating causes stars to move in different directions (front vs. behind)
+   - ON: Only stars in front visible; all visible stars move together when rotating; stars appear/disappear at edges
+
+**Orientation:**
+- No angle readouts available — must estimate or use coordinate math
+- Orientation likely persists between sessions (unconfirmed)
+- "Forward" probably defined by a plane through ship's position
+
 ## Mirror Moon & Manipulator
 
 Each moon has a **mirror moon**—a smaller copy that orbits it, functioning as a map/overview. The manipulator primarily interacts with the mirror moon.
@@ -180,3 +204,4 @@ These are explicitly deferred—not part of current milestones:
 - **GUI**: Unified graphical interface bringing together the 3D star map, observatory views, and triangulation workflow.
 - **Auto-generated star names**: Generate systematic names for discovered stars using their exact coordinates encoded as three pairs of base-36 digits (0-9, A-Z). Example: star at (123, 456, 789) → "3FCOLX". Fits exactly within the game's 6-character player name limit (by design!). Include a decoder to convert base-36 names back to coordinates for stars not yet in the database.
 - **Directional indicators on observatory view**: Show compass-like arrows indicating which direction +/- azimuth and +/- elevation adjustments will move the view. Essential when rotation and flip settings are applied, since the mapping becomes non-intuitive.
+- **Navigate to known stars by name**: Allow `--navigate BENCHI` to look up coordinates from the star database, in addition to original names and raw coordinates.

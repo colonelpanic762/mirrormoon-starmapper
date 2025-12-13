@@ -21,6 +21,13 @@ from .triangulation import (
     point_to_cone_distance,
     format_result,
 )
+from .navigation import (
+    navigate_to_target,
+    NavigationResult,
+    decode_original_name,
+    original_name_center,
+    format_navigation_result,
+)
 
 __all__ = [
     # Core data types
@@ -49,4 +56,10 @@ __all__ = [
     "TriangulationResult",
     "point_to_cone_distance",
     "format_result",
+    # Navigation
+    "navigate_to_target",
+    "NavigationResult",
+    "decode_original_name",
+    "original_name_center",
+    "format_navigation_result",
 ]

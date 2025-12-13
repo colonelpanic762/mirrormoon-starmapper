@@ -19,6 +19,8 @@ from starmapper import (
     plot_star_map_with_observations,
     triangulate,
     format_result,
+    navigate_to_target,
+    format_navigation_result,
 )
 
 
@@ -193,6 +195,37 @@ def main():
         action="store_true",
         help="Delete all stored observations",
     )
+    # Navigation arguments
+    parser.add_argument(
+        "--navigate", "-n",
+        type=str,
+        metavar="TARGET",
+        help="Calculate direction to target (9-digit coords or original name like TYU/29)",
+    )
+    parser.add_argument(
+        "--ref-ll",
+        type=str,
+        metavar="COORDS",
+        help="Lower-left reference star coordinates (9 digits)",
+    )
+    parser.add_argument(
+        "--ref-lr",
+        type=str,
+        metavar="COORDS",
+        help="Lower-right reference star coordinates (9 digits)",
+    )
+    parser.add_argument(
+        "--ref-ur",
+        type=str,
+        metavar="COORDS",
+        help="Upper-right reference star coordinates (9 digits)",
+    )
+    parser.add_argument(
+        "--ref-ul",
+        type=str,
+        metavar="COORDS",
+        help="Upper-left reference star coordinates (9 digits)",
+    )
     args = parser.parse_args()
 
     if not args.data.exists():
@@ -242,6 +275,33 @@ def main():
                 deg = np.degrees(obs.cone_half_angle)
                 print(f"  [{obs.id[:8]}...] From {obs.observer_coordinates} | "
                       f"Half-angle: {deg:.1f}° | {obs.timestamp}")
+        return 0
+
+    # Handle navigation
+    if args.navigate:
+        # Validate that all reference stars are provided
+        refs = {
+            'll': args.ref_ll,
+            'lr': args.ref_lr,
+            'ur': args.ref_ur,
+            'ul': args.ref_ul,
+        }
+        missing = [k for k, v in refs.items() if v is None]
+        if missing:
+            print(f"\nError: Navigation requires all 4 reference stars.")
+            print(f"Missing: {', '.join('--ref-' + m for m in missing)}")
+            print("\nUsage: python main.py --navigate TYU/29 \\")
+            print("         --ref-ll 649496127 --ref-lr 795566583 \\")
+            print("         --ref-ur 826552773 --ref-ul 627461143")
+            return 1
+
+        try:
+            result = navigate_to_target(refs, args.navigate)
+            print(f"\n== Navigation ==")
+            print(format_navigation_result(result, verbose=True))
+        except ValueError as e:
+            print(f"\nError: {e}")
+            return 1
         return 0
 
     # Handle triangulation
