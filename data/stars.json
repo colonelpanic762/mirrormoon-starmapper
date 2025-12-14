@@ -422,7 +422,26 @@
       "has_observatory": false,
       "observatory_active": null,
       "anomaly_visible": true,
-      "notes": "Anomaly visible from here (no observatory)"
+      "notes": "Anomaly visible from here (no observatory structure found)"
+    },
+    {
+      "coordinates": "758466793",
+      "original_name": null,
+      "player_name": "ALGRAU",
+      "discovered_by_user": false,
+      "has_observatory": false,
+      "observatory_active": null,
+      "anomaly_visible": false,
+      "notes": "Used as calibration reference point"
+    },
+    {
+      "coordinates": "270030459",
+      "original_name": "IAY/53",
+      "player_name": null,
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null
     }
   ],
   "observations": [
