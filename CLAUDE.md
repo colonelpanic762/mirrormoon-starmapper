@@ -205,3 +205,65 @@ These are explicitly deferred—not part of current milestones:
 - **Auto-generated star names**: Generate systematic names for discovered stars using their exact coordinates encoded as three pairs of base-36 digits (0-9, A-Z). Example: star at (123, 456, 789) → "3FCOLX". Fits exactly within the game's 6-character player name limit (by design!). Include a decoder to convert base-36 names back to coordinates for stars not yet in the database.
 - **Directional indicators on observatory view**: Show compass-like arrows indicating which direction +/- azimuth and +/- elevation adjustments will move the view. Essential when rotation and flip settings are applied, since the mapping becomes non-intuitive.
 - **Navigate to known stars by name**: Allow `--navigate BENCHI` to look up coordinates from the star database, in addition to original names and raw coordinates.
+
+## Multi-Image Stitching Design (Coordinate Prediction)
+
+This section documents the geometric constraints for estimating unknown star positions from observatory screenshots when only limited reference stars are available.
+
+### The Calibration Problem
+
+Each observatory screenshot has 6 unknowns:
+- **Continuous**: FOV, azimuth, elevation, rotation (4 parameters)
+- **Discrete**: horizontal flip, vertical flip (4 combinations)
+
+Each known-position star visible in an image provides 2 constraints (its pixel x,y must match its projected position). Therefore:
+
+| Known Stars | Constraints | Result |
+|-------------|-------------|--------|
+| 1 star | 2 | Underdetermined → cone of possible directions |
+| 2 stars | 4 | Determined but flip-ambiguous → 4 candidate rays |
+| 3 stars | 6 | Overdetermined, some flips distinguishable → 2 candidate rays |
+| 4+ stars | 8+ | Fully constrained → 1 direction ray |
+
+### Multi-Image Stitching Approach
+
+When known-position stars are split across multiple images (e.g., IAY/53 in Image 2, UTA/99 in Image 3), we can link them via constellation correspondences:
+
+**Constraint sources:**
+1. **Known-position stars**: Anchor the combined view to real 3D coordinates
+2. **Cross-image correspondences**: Same unnamed star marked in two images constrains their relative orientation
+3. **Constellation geometry**: The angular pattern is rigid—provides implicit constraints
+
+**Minimum requirements for 4 effective reference points:**
+- 2 known-position stars (in any images)
+- 2+ unnamed constellation stars marked across image boundaries
+- Enough correspondences to chain all images together
+
+**Example for OBSERV screenshots:**
+```
+Image 2          Image 1              Image 3
+─────────        ─────────            ─────────
+IAY/53 ✓    ←──  VOID6      ──→      DERVOT
+VOID6            DERVOT               KLORIA
+anomaly          KLORIA               UTA/99 ✓
+                 UMA
+                 anomaly
+```
+
+Mark correspondences:
+1. IAY/53 in Image 2 (known position)
+2. UTA/99 in Image 3 (known position)
+3. VOID6 in Images 1 & 2 (links those images)
+4. DERVOT in Images 1 & 3 (links those images)
+5. KLORIA in Images 1 & 3 (resolves flip ambiguity)
+
+### Output
+
+With 2 known-position stars and constellation links, the result is **4 candidate direction rays** for any unknown star (one per flip combination). These rays can be:
+1. Visualized in the 3D star map
+2. Exported for use with ship navigation (`--navigate-interactive`)
+3. Further narrowed if the star has an original name (coordinate bounds from name decoding)
+
+### Key Geometric Insight
+
+Constellation patterns act as a **rigid angular reference frame**. Even though unnamed constellation stars don't have known absolute positions, their fixed angular relationships to each other propagate calibration information across images. This is analogous to surveying: a few known reference points plus angular measurements let you extend your coordinate system to new locations.

@@ -39,6 +39,7 @@ from .calibration import (
 )
 from .screenshot_tool import (
     ScreenshotSession,
+    DirectionRay,
     create_interactive_session,
     estimate_from_click,
 )
@@ -84,4 +85,9 @@ __all__ = [
     "calibrate_from_markers",
     "compute_direction_from_pixel",
     "estimate_star_position",
+    # Screenshot tool
+    "ScreenshotSession",
+    "DirectionRay",
+    "create_interactive_session",
+    "estimate_from_click",
 ]
