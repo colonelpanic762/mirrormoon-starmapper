@@ -23,6 +23,8 @@ from .triangulation import (
 )
 from .navigation import (
     navigate_to_target,
+    navigate_with_calibration,
+    NavCalibration,
     NavigationResult,
     decode_original_name,
     original_name_center,
@@ -37,6 +39,8 @@ __all__ = [
     "ViewState",
     "ClickState",
     "InteractiveState",
+    "NavCalibration",
+    "NavigationResult",
     # Coordinate functions
     "parse_coordinates",
     "to_coordinate_string",
@@ -58,7 +62,7 @@ __all__ = [
     "format_result",
     # Navigation
     "navigate_to_target",
-    "NavigationResult",
+    "navigate_with_calibration",
     "decode_original_name",
     "original_name_center",
     "format_navigation_result",

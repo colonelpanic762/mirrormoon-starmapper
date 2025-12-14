@@ -1,14 +1,209 @@
 """Ship star map navigation helper.
 
 Calculates directions to targets based on reference stars visible on the
-ship's star map display. Uses screen position of known stars to establish
-a local coordinate frame, then projects target directions onto it.
+ship's star map display. Uses calibration samples to establish a local
+coordinate frame, then projects target directions onto it.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
 import numpy as np
 
 from .coords import parse_coordinates, LETTER_TO_RANGE
+
+
+# Type alias for screen directions
+ScreenDirection = Literal["left", "right", "up", "down"]
+
+
+@dataclass
+class NavCalibration:
+    """Stores calibration data for ship star map navigation.
+
+    Calibration is built up by sampling star coordinates while moving
+    in known screen directions. The samples are used to compute 3D
+    vectors corresponding to screen directions.
+    """
+    ship_position: tuple[int, int, int] | None = None
+
+    # Samples: list of (x, y, z) coordinates for each direction
+    left_samples: list[tuple[int, int, int]] = field(default_factory=list)
+    right_samples: list[tuple[int, int, int]] = field(default_factory=list)
+    up_samples: list[tuple[int, int, int]] = field(default_factory=list)
+    down_samples: list[tuple[int, int, int]] = field(default_factory=list)
+
+    # Computed vectors (None until enough samples)
+    left_vector: np.ndarray | None = None
+    right_vector: np.ndarray | None = None
+    up_vector: np.ndarray | None = None
+    down_vector: np.ndarray | None = None
+
+    def add_sample(self, direction: ScreenDirection, coords: tuple[int, int, int]) -> None:
+        """Add a calibration sample for a screen direction."""
+        samples = getattr(self, f"{direction}_samples")
+        samples.append(coords)
+        self._recompute_vectors()
+
+    def _recompute_vectors(self) -> None:
+        """Recompute direction vectors from current samples."""
+        # Need at least 2 samples to compute a vector
+        if len(self.left_samples) >= 2:
+            self.left_vector = self._compute_vector(self.left_samples)
+        if len(self.right_samples) >= 2:
+            self.right_vector = self._compute_vector(self.right_samples)
+        if len(self.up_samples) >= 2:
+            self.up_vector = self._compute_vector(self.up_samples)
+        if len(self.down_samples) >= 2:
+            self.down_vector = self._compute_vector(self.down_samples)
+
+        # Orthogonalize if we have both horizontal and vertical
+        self._orthogonalize()
+
+    def _compute_vector(self, samples: list[tuple[int, int, int]]) -> np.ndarray:
+        """Compute direction vector by averaging directions from ship to each sample.
+
+        Each sample represents a star visible in that screen direction. We compute
+        the unit vector from ship to each sample and average them.
+        """
+        if len(samples) < 2:
+            return None
+
+        if self.ship_position is None:
+            # Without ship position, fall back to line-fitting between samples
+            points = np.array(samples, dtype=np.float64)
+            vec = points[-1] - points[0]
+            norm = np.linalg.norm(vec)
+            return vec / norm if norm > 0 else None
+
+        ship = np.array(self.ship_position, dtype=np.float64)
+
+        # Compute normalized direction from ship to each sample
+        directions = []
+        for sample in samples:
+            vec = np.array(sample, dtype=np.float64) - ship
+            norm = np.linalg.norm(vec)
+            if norm > 0:
+                directions.append(vec / norm)
+
+        if len(directions) < 2:
+            return None
+
+        # Average the normalized direction vectors
+        avg_direction = np.mean(directions, axis=0)
+        norm = np.linalg.norm(avg_direction)
+        if norm > 0:
+            return avg_direction / norm
+        return None
+
+    def _orthogonalize(self) -> None:
+        """Orthogonalize up/down vectors against left/right using Gram-Schmidt."""
+        # Get horizontal vector (prefer left, fall back to right)
+        h_vec = None
+        if self.left_vector is not None:
+            h_vec = self.left_vector
+        elif self.right_vector is not None:
+            h_vec = -self.right_vector  # Negate since right is opposite of left
+
+        if h_vec is None:
+            return
+
+        # Orthogonalize vertical vectors
+        if self.up_vector is not None:
+            self.up_vector = self._orthogonalize_against(self.up_vector, h_vec)
+        if self.down_vector is not None:
+            self.down_vector = self._orthogonalize_against(self.down_vector, h_vec)
+
+    def _orthogonalize_against(self, vec: np.ndarray, ref: np.ndarray) -> np.ndarray:
+        """Remove component of vec in direction of ref (Gram-Schmidt)."""
+        projection = np.dot(vec, ref) * ref
+        orthogonal = vec - projection
+        norm = np.linalg.norm(orthogonal)
+        if norm > 0:
+            return orthogonal / norm
+        return vec  # Return original if orthogonalization fails
+
+    def get_screen_axes(self) -> 'ScreenAxes | None':
+        """Get ScreenAxes from calibration, or None if insufficient data."""
+        # Need at least one horizontal and one vertical vector
+        h_vec = self.left_vector if self.left_vector is not None else (
+            -self.right_vector if self.right_vector is not None else None
+        )
+        v_vec = self.up_vector if self.up_vector is not None else (
+            -self.down_vector if self.down_vector is not None else None
+        )
+
+        if h_vec is None or v_vec is None:
+            return None
+
+        # Use ship position as center, or average of all samples
+        if self.ship_position is not None:
+            center = np.array(self.ship_position, dtype=np.float64)
+        else:
+            all_samples = (self.left_samples + self.right_samples +
+                          self.up_samples + self.down_samples)
+            if all_samples:
+                center = np.mean([np.array(s) for s in all_samples], axis=0)
+            else:
+                center = np.array([500, 500, 500], dtype=np.float64)
+
+        return ScreenAxes(
+            right=-h_vec,  # Right is opposite of left
+            up=v_vec,
+            center=center,
+        )
+
+    def is_calibrated(self) -> bool:
+        """Check if calibration has enough data for navigation."""
+        return self.get_screen_axes() is not None
+
+    def status(self) -> str:
+        """Return a status string describing calibration state."""
+        lines = []
+        if self.ship_position:
+            lines.append(f"Ship: ({self.ship_position[0]}, {self.ship_position[1]}, {self.ship_position[2]})")
+
+        for direction in ["left", "right", "up", "down"]:
+            samples = getattr(self, f"{direction}_samples")
+            vec = getattr(self, f"{direction}_vector")
+            status = f"{len(samples)} samples"
+            if vec is not None:
+                status += f" → ({vec[0]:.2f}, {vec[1]:.2f}, {vec[2]:.2f})"
+            lines.append(f"  {direction.capitalize()}: {status}")
+
+        if self.is_calibrated():
+            lines.append("✓ Calibration complete - ready for navigation")
+        else:
+            needed = []
+            if self.left_vector is None and self.right_vector is None:
+                needed.append("horizontal (left or right)")
+            if self.up_vector is None and self.down_vector is None:
+                needed.append("vertical (up or down)")
+            lines.append(f"✗ Need more samples: {', '.join(needed)}")
+
+        return "\n".join(lines)
+
+    def to_dict(self) -> dict:
+        """Serialize for JSON storage."""
+        return {
+            "ship_position": self.ship_position,
+            "left_samples": self.left_samples,
+            "right_samples": self.right_samples,
+            "up_samples": self.up_samples,
+            "down_samples": self.down_samples,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'NavCalibration':
+        """Deserialize from JSON storage."""
+        cal = cls(
+            ship_position=tuple(data["ship_position"]) if data.get("ship_position") else None,
+            left_samples=[tuple(s) for s in data.get("left_samples", [])],
+            right_samples=[tuple(s) for s in data.get("right_samples", [])],
+            up_samples=[tuple(s) for s in data.get("up_samples", [])],
+            down_samples=[tuple(s) for s in data.get("down_samples", [])],
+        )
+        cal._recompute_vectors()
+        return cal
 
 
 @dataclass
@@ -255,3 +450,49 @@ def format_navigation_result(result: NavigationResult, verbose: bool = False) ->
             lines.append(f"Pan {v_dir}-{h_dir}")
 
     return "\n".join(lines)
+
+
+def navigate_with_calibration(
+    calibration: NavCalibration,
+    target: str,
+    from_position: tuple[int, int, int] | None = None,
+) -> NavigationResult:
+    """Navigate to a target using calibrated screen axes.
+
+    Args:
+        calibration: NavCalibration with sufficient samples
+        target: Either a 9-digit coordinate string or an original name like "TYU/29"
+        from_position: Override the center point (for navigation updates during travel)
+
+    Returns:
+        NavigationResult with direction to target
+
+    Raises:
+        ValueError: If calibration is insufficient or target is invalid
+    """
+    axes = calibration.get_screen_axes()
+    if axes is None:
+        raise ValueError("Calibration incomplete. Need at least 2 samples each for "
+                        "one horizontal (left/right) and one vertical (up/down) direction.")
+
+    # Override center if a different position is specified
+    if from_position is not None:
+        axes = ScreenAxes(
+            right=axes.right,
+            up=axes.up,
+            center=np.array(from_position, dtype=np.float64),
+        )
+
+    # Parse target
+    target_name = None
+    if len(target) == 9 and target.isdigit():
+        target_coords = parse_coordinates(target)
+    else:
+        # Try as original name
+        target_name = target
+        center = original_name_center(target)
+        if center is None:
+            raise ValueError(f"Invalid target: {target}. Expected 9-digit coordinates or original name (e.g., TYU/29)")
+        target_coords = center
+
+    return calculate_direction(axes, target_coords, target_name)

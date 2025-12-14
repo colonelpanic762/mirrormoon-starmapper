@@ -405,14 +405,24 @@
       "notes": "Visible from OBSERV. Approx region: (5xx, 0xx, 4xx)"
     },
     {
-      "coordinates": null,
+      "coordinates": "361815007",
       "original_name": "UTA/99",
       "player_name": null,
       "discovered_by_user": false,
       "has_observatory": null,
       "observatory_active": null,
       "anomaly_visible": null,
-      "notes": "Visible from OBSERV. Approx region: (3xx, 8xx, 0xx)"
+      "notes": "Visible from OBSERV"
+    },
+    {
+      "coordinates": "799452455",
+      "original_name": "LYY/53",
+      "player_name": "DIRK",
+      "discovered_by_user": false,
+      "has_observatory": false,
+      "observatory_active": null,
+      "anomaly_visible": true,
+      "notes": "Anomaly visible from here (no observatory)"
     }
   ],
   "observations": [
@@ -452,5 +462,48 @@
         "flip_vertical": true
       }
     }
-  ]
+  ],
+  "nav_calibration": {
+    "ship_position": [
+      758,
+      466,
+      793
+    ],
+    "left_samples": [
+      [
+        671,
+        461,
+        913
+      ],
+      [
+        627,
+        461,
+        143
+      ],
+      [
+        559,
+        473,
+        507
+      ]
+    ],
+    "right_samples": [],
+    "up_samples": [
+      [
+        758,
+        500,
+        920
+      ],
+      [
+        760,
+        602,
+        684
+      ],
+      [
+        755,
+        675,
+        36
+      ]
+    ],
+    "down_samples": []
+  }
 }

@@ -20,6 +20,8 @@ from starmapper import (
     triangulate,
     format_result,
     navigate_to_target,
+    navigate_with_calibration,
+    NavCalibration,
     format_navigation_result,
 )
 
@@ -103,6 +105,49 @@ def clear_all_observations(data_path: Path) -> int:
     temp_path.rename(data_path)
 
     return count
+
+
+def load_calibration(data_path: Path) -> NavCalibration | None:
+    """Load navigation calibration from the JSON data file."""
+    with open(data_path) as f:
+        data = json.load(f)
+
+    cal_data = data.get("nav_calibration")
+    if cal_data is None:
+        return None
+
+    return NavCalibration.from_dict(cal_data)
+
+
+def save_calibration(data_path: Path, calibration: NavCalibration) -> None:
+    """Save navigation calibration to the JSON data file."""
+    with open(data_path) as f:
+        data = json.load(f)
+
+    data["nav_calibration"] = calibration.to_dict()
+
+    # Write atomically
+    temp_path = data_path.with_suffix('.json.tmp')
+    with open(temp_path, 'w') as f:
+        json.dump(data, f, indent=2)
+    temp_path.rename(data_path)
+
+
+def clear_calibration(data_path: Path) -> bool:
+    """Remove navigation calibration. Returns True if there was one to remove."""
+    with open(data_path) as f:
+        data = json.load(f)
+
+    had_calibration = "nav_calibration" in data
+    if had_calibration:
+        del data["nav_calibration"]
+
+        temp_path = data_path.with_suffix('.json.tmp')
+        with open(temp_path, 'w') as f:
+            json.dump(data, f, indent=2)
+        temp_path.rename(data_path)
+
+    return had_calibration
 
 
 def main():
@@ -203,28 +248,62 @@ def main():
         help="Calculate direction to target (9-digit coords or original name like TYU/29)",
     )
     parser.add_argument(
+        "--navigate-interactive", "-ni",
+        type=str,
+        metavar="TARGET",
+        help="Interactive navigation with position updates (like a compass)",
+    )
+    parser.add_argument(
         "--ref-ll",
         type=str,
         metavar="COORDS",
-        help="Lower-left reference star coordinates (9 digits)",
+        help="Lower-left reference star coordinates (9 digits) [legacy mode]",
     )
     parser.add_argument(
         "--ref-lr",
         type=str,
         metavar="COORDS",
-        help="Lower-right reference star coordinates (9 digits)",
+        help="Lower-right reference star coordinates (9 digits) [legacy mode]",
     )
     parser.add_argument(
         "--ref-ur",
         type=str,
         metavar="COORDS",
-        help="Upper-right reference star coordinates (9 digits)",
+        help="Upper-right reference star coordinates (9 digits) [legacy mode]",
     )
     parser.add_argument(
         "--ref-ul",
         type=str,
         metavar="COORDS",
-        help="Upper-left reference star coordinates (9 digits)",
+        help="Upper-left reference star coordinates (9 digits) [legacy mode]",
+    )
+    # Calibration-based navigation
+    parser.add_argument(
+        "--calibrate-nav",
+        action="store_true",
+        help="Start/continue navigation calibration (interactive)",
+    )
+    parser.add_argument(
+        "--add-sample",
+        nargs=2,
+        metavar=("DIRECTION", "COORDS"),
+        help="Add calibration sample: --add-sample left 123456789",
+    )
+    parser.add_argument(
+        "--ship-position",
+        type=str,
+        metavar="COORDS",
+        help="Set ship position for calibration (9 digits)",
+    )
+    parser.add_argument(
+        "--show-calibration",
+        action="store_true",
+        help="Show current navigation calibration status",
+    )
+    parser.add_argument(
+        "--clear-calibration",
+        action="store_true",
+        help="Delete navigation calibration",
     )
     args = parser.parse_args()
 
@@ -277,31 +356,213 @@ def main():
                       f"Half-angle: {deg:.1f}° | {obs.timestamp}")
         return 0
 
+    # Handle calibration management
+    if args.clear_calibration:
+        if clear_calibration(args.data):
+            print("\nNavigation calibration cleared")
+        else:
+            print("\nNo calibration to clear")
+        return 0
+
+    if args.show_calibration:
+        calibration = load_calibration(args.data)
+        if calibration is None:
+            print("\nNo navigation calibration stored")
+            print("Use --calibrate-nav to start calibration")
+        else:
+            print("\n== Navigation Calibration ==")
+            print(calibration.status())
+        return 0
+
+    if args.ship_position:
+        calibration = load_calibration(args.data) or NavCalibration()
+        calibration.ship_position = parse_coordinates(args.ship_position)
+        save_calibration(args.data, calibration)
+        print(f"\nShip position set to {calibration.ship_position}")
+        return 0
+
+    if args.add_sample:
+        direction, coords = args.add_sample
+        direction = direction.lower()
+        if direction not in ("left", "right", "up", "down"):
+            print(f"\nError: Invalid direction '{direction}'. Use: left, right, up, down")
+            return 1
+
+        calibration = load_calibration(args.data) or NavCalibration()
+        sample_coords = parse_coordinates(coords)
+        calibration.add_sample(direction, sample_coords)
+        save_calibration(args.data, calibration)
+
+        print(f"\n== Sample Added ==")
+        print(f"Direction: {direction}")
+        print(f"Coordinates: {sample_coords}")
+        print(f"\n{calibration.status()}")
+        return 0
+
+    if args.calibrate_nav:
+        # Interactive calibration mode
+        calibration = load_calibration(args.data) or NavCalibration()
+
+        print("\n== Navigation Calibration ==")
+        print("For each direction, enter coordinates of stars visible in that direction.")
+        print("Each sample = a star that's to the LEFT/RIGHT/UP/DOWN of your ship.\n")
+        print("Commands: 'status', 'done', 'help', 'reset' (clear all samples)\n")
+
+        if calibration.ship_position is None:
+            print("First, set your ship's position.")
+            ship_input = input("Ship position (9 digits): ").strip()
+            if ship_input.lower() == 'done':
+                save_calibration(args.data, calibration)
+                print("\nCalibration saved.")
+                return 0
+            calibration.ship_position = parse_coordinates(ship_input)
+            save_calibration(args.data, calibration)
+
+        print(f"Ship: {calibration.ship_position}")
+        print("(Use --ship-position to change if you've moved)\n")
+
+        while True:
+            try:
+                line = input("Enter [direction] [coords] (or status/done/help): ").strip()
+            except EOFError:
+                break
+
+            if not line:
+                continue
+            if line.lower() == 'done':
+                break
+            if line.lower() == 'status':
+                print(f"\n{calibration.status()}\n")
+                continue
+            if line.lower() == 'help':
+                print("\nCommands:")
+                print("  left 123456789   - Add star that's to the LEFT of your ship")
+                print("  right 123456789  - Add star that's to the RIGHT of your ship")
+                print("  up 123456789     - Add star that's ABOVE your ship on screen")
+                print("  down 123456789   - Add star that's BELOW your ship on screen")
+                print("  status           - Show calibration progress")
+                print("  reset            - Clear all samples and start over")
+                print("  done             - Save and exit")
+                print("\nTip: Stars further from ship center give better calibration.\n")
+                continue
+            if line.lower() == 'reset':
+                calibration = NavCalibration(ship_position=calibration.ship_position)
+                print("Samples cleared. Ship position kept.")
+                continue
+
+            parts = line.split()
+            if len(parts) != 2:
+                print("Invalid input. Use: [direction] [coords]")
+                continue
+
+            direction, coords = parts
+            direction = direction.lower()
+            if direction not in ("left", "right", "up", "down"):
+                print(f"Invalid direction '{direction}'. Use: left, right, up, down")
+                continue
+
+            try:
+                sample_coords = parse_coordinates(coords)
+                calibration.add_sample(direction, sample_coords)
+                vec = getattr(calibration, f"{direction}_vector")
+                if vec is not None:
+                    print(f"  ✓ {direction}: {sample_coords} → vector ({vec[0]:.2f}, {vec[1]:.2f}, {vec[2]:.2f})")
+                else:
+                    print(f"  + {direction}: {sample_coords} (need 1 more sample)")
+            except ValueError as e:
+                print(f"Error: {e}")
+
+        save_calibration(args.data, calibration)
+        print(f"\n{calibration.status()}")
+        print("\nCalibration saved.")
+        return 0
+
+    # Handle interactive navigation (compass mode)
+    if args.navigate_interactive:
+        calibration = load_calibration(args.data)
+        if calibration is None or not calibration.is_calibrated():
+            print("\nError: No calibration found. Run --calibrate-nav first.")
+            return 1
+
+        target = args.navigate_interactive
+        print(f"\n== Interactive Navigation to {target} ==")
+
+        # Show initial direction
+        try:
+            result = navigate_with_calibration(calibration, target)
+            coords = result.target_coords
+            print(f"Target: {target} → ({coords[0]}, {coords[1]}, {coords[2]})")
+            print("Update your position as you travel to get updated directions.")
+            print("Enter coordinates of a nearby star, or 'done' to exit.\n")
+            print(f"From ship position {calibration.ship_position}:")
+            print(f"  → {result.clock_description} ({result.distance_from_view_center:.0f} PC)\n")
+        except ValueError as e:
+            print(f"Error: {e}")
+            return 1
+
+        # Interactive loop
+        while True:
+            try:
+                line = input("Current position (or 'done'): ").strip()
+            except EOFError:
+                break
+
+            if not line or line.lower() == 'done':
+                break
+
+            try:
+                current_pos = parse_coordinates(line)
+                # Calculate direction from new position (keeps same orientation/axes)
+                result = navigate_with_calibration(calibration, target, from_position=current_pos)
+                print(f"  → {result.clock_description} ({result.distance_from_view_center:.0f} PC)")
+            except ValueError as e:
+                print(f"  Error: {e}")
+
+        print("\nNavigation complete.")
+        return 0
+
     # Handle navigation
     if args.navigate:
-        # Validate that all reference stars are provided
+        # Check if using legacy 4-corner mode
         refs = {
             'll': args.ref_ll,
             'lr': args.ref_lr,
             'ur': args.ref_ur,
             'ul': args.ref_ul,
         }
-        missing = [k for k, v in refs.items() if v is None]
-        if missing:
-            print(f"\nError: Navigation requires all 4 reference stars.")
-            print(f"Missing: {', '.join('--ref-' + m for m in missing)}")
-            print("\nUsage: python main.py --navigate TYU/29 \\")
-            print("         --ref-ll 649496127 --ref-lr 795566583 \\")
-            print("         --ref-ur 826552773 --ref-ul 627461143")
-            return 1
+        has_any_ref = any(v is not None for v in refs.values())
 
-        try:
-            result = navigate_to_target(refs, args.navigate)
-            print(f"\n== Navigation ==")
-            print(format_navigation_result(result, verbose=True))
-        except ValueError as e:
-            print(f"\nError: {e}")
-            return 1
+        if has_any_ref:
+            # Legacy mode: require all 4 corners
+            missing = [k for k, v in refs.items() if v is None]
+            if missing:
+                print(f"\nError: Legacy navigation requires all 4 reference stars.")
+                print(f"Missing: {', '.join('--ref-' + m for m in missing)}")
+                return 1
+
+            try:
+                result = navigate_to_target(refs, args.navigate)
+                print(f"\n== Navigation (legacy mode) ==")
+                print(format_navigation_result(result, verbose=True))
+            except ValueError as e:
+                print(f"\nError: {e}")
+                return 1
+        else:
+            # Calibration mode: use stored calibration
+            calibration = load_calibration(args.data)
+            if calibration is None or not calibration.is_calibrated():
+                print("\nError: No calibration found. Either:")
+                print("  1. Run --calibrate-nav to calibrate, OR")
+                print("  2. Use legacy mode with --ref-ll/lr/ur/ul")
+                return 1
+
+            try:
+                result = navigate_with_calibration(calibration, args.navigate)
+                print(f"\n== Navigation ==")
+                print(format_navigation_result(result, verbose=True))
+            except ValueError as e:
+                print(f"\nError: {e}")
+                return 1
         return 0
 
     # Handle triangulation
