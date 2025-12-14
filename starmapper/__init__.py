@@ -30,6 +30,18 @@ from .navigation import (
     original_name_center,
     format_navigation_result,
 )
+from .calibration import (
+    CalibrationResult,
+    StarMarker,
+    calibrate_from_markers,
+    compute_direction_from_pixel,
+    estimate_star_position,
+)
+from .screenshot_tool import (
+    ScreenshotSession,
+    create_interactive_session,
+    estimate_from_click,
+)
 
 __all__ = [
     # Core data types
@@ -66,4 +78,10 @@ __all__ = [
     "decode_original_name",
     "original_name_center",
     "format_navigation_result",
+    # Calibration
+    "CalibrationResult",
+    "StarMarker",
+    "calibrate_from_markers",
+    "compute_direction_from_pixel",
+    "estimate_star_position",
 ]

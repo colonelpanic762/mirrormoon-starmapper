@@ -305,6 +305,19 @@ def main():
         action="store_true",
         help="Delete navigation calibration",
     )
+    # Screenshot calibration tool
+    parser.add_argument(
+        "--calibrate-screenshot",
+        type=Path,
+        metavar="IMAGE",
+        help="Open interactive tool to calibrate view from screenshot",
+    )
+    parser.add_argument(
+        "--screenshot-observatory",
+        type=str,
+        metavar="NAME",
+        help="Observatory name for screenshot calibration (required with --calibrate-screenshot)",
+    )
     args = parser.parse_args()
 
     if not args.data.exists():
@@ -354,6 +367,51 @@ def main():
                 deg = np.degrees(obs.cone_half_angle)
                 print(f"  [{obs.id[:8]}...] From {obs.observer_coordinates} | "
                       f"Half-angle: {deg:.1f}° | {obs.timestamp}")
+        return 0
+
+    # Handle screenshot calibration tool
+    if args.calibrate_screenshot:
+        if not args.screenshot_observatory:
+            print("\nError: --screenshot-observatory required with --calibrate-screenshot")
+            return 1
+
+        observer = find_star_by_name(stars, args.screenshot_observatory)
+        if observer is None:
+            print(f"\nError: Observatory '{args.screenshot_observatory}' not found")
+            return 1
+        if not observer.has_position:
+            print(f"\nError: Observatory '{observer.display_name}' has no known coordinates")
+            return 1
+
+        if not args.calibrate_screenshot.exists():
+            print(f"\nError: Screenshot not found: {args.calibrate_screenshot}")
+            return 1
+
+        from starmapper.screenshot_tool import create_interactive_session
+        import matplotlib.pyplot as plt
+
+        print(f"\n== Screenshot Calibration ==")
+        print(f"Observatory: {observer.display_name} at {observer.position}")
+        print(f"Screenshot: {args.calibrate_screenshot}")
+        print()
+        print("Instructions:")
+        print("  1. Type a star name in the text box and press Enter")
+        print("  2. Click on that star in the image")
+        print("  3. Repeat for 2+ stars to calibrate")
+        print("  4. Green circles = your marks, Red X = projected positions")
+        print()
+
+        def on_complete(session):
+            print(f"\n✓ Calibration complete!")
+            print(session.calibration)
+
+        fig, session = create_interactive_session(
+            args.calibrate_screenshot,
+            observer,
+            stars,
+            on_calibration_complete=on_complete
+        )
+        plt.show()
         return 0
 
     # Handle calibration management
