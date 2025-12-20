@@ -267,3 +267,80 @@ With 2 known-position stars and constellation links, the result is **4 candidate
 ### Key Geometric Insight
 
 Constellation patterns act as a **rigid angular reference frame**. Even though unnamed constellation stars don't have known absolute positions, their fixed angular relationships to each other propagate calibration information across images. This is analogous to surveying: a few known reference points plus angular measurements let you extend your coordinate system to new locations.
+
+### Spherical Moon Geometry Model (v2)
+
+The original calibration model treated azimuth, elevation, and rotation as independent parameters. This was incorrect—the game's actual camera system has strong geometric constraints.
+
+#### The "Roomba" Camera Model
+
+The player walks on the surface of a **tiny spherical moon** with these constraints:
+
+| Action | Effect |
+|--------|--------|
+| Rotate (A/D keys) | Yaw around local "up" vector |
+| Walk (W/S keys) | Move along moon surface at **10°/sec** |
+| Tilt up/down | **Not possible** (fixed horizon) |
+| Roll | **Not possible** (always level) |
+| Zoom | **Not possible** (fixed FOV) |
+
+**Key insight:** "Up" = local gravity = radial direction from moon center. As you walk, your local reference frame rotates because the moon surface curves. Two screenshots taken meters apart see stars from essentially the same 3D position but with completely different "up" directions.
+
+#### Measured Constants
+
+- **Walking angular velocity**: 10°/sec (360° / 36.03s circumnavigation)
+- **Moon physical size**: Irrelevant—only angular relationships matter
+- **FOV**: ~90° (constant within game session)
+
+#### New Parameterization
+
+**Per-image parameters (3 DOF):**
+```
+up_theta, up_phi  — spherical coords defining local "up" vector (2 DOF)
+yaw               — horizontal rotation around up vector (1 DOF)
+```
+
+**Derived camera orientation:**
+```python
+up = spherical_to_cartesian(up_theta, up_phi)  # Local gravity direction
+right = normalize(cross([0,0,1], up))          # Or other reference
+forward = cross(up, right)                      # Look direction (horizon)
+forward = rotate_around_axis(forward, up, yaw) # Apply yaw
+right = cross(forward, up)                      # Recompute right
+```
+
+**Implicit constraints (vs. old model):**
+- Elevation = 0 (always looking at local horizon)
+- Roll = 0 (camera always level relative to local gravity)
+- Flip settings: Likely unnecessary—the spherical model should handle orientation differences naturally
+
+**Shared parameters:**
+- FOV (same game session)
+- Observer position (same moon = same star cluster position)
+
+#### Why This Model Is Better
+
+The old model had 4 continuous DOF per image (FOV, azimuth, elevation, rotation) plus flip ambiguity. The solver could find many local minima because:
+1. Different (elevation, rotation) combinations could produce similar projections
+2. Flip settings were trying to compensate for reference frame differences
+
+The new model has only 3 DOF per image and directly encodes the game's physics:
+1. The up vector captures the reference frame difference between screenshots
+2. Yaw is the only rotational freedom (matching actual player control)
+3. No elevation/roll to optimize—they're implicitly zero
+
+#### Skybox Geometry (Confirmed: Spherical)
+
+**Evidence for spherical skybox:**
+1. When walking forward, stars at screen edges curve inward slightly (center stars move straight)
+2. **Mirror moon parallax**: The apparent distance between nearby stars and the mirror moon changes with viewing angle—this is definitive proof of a 3D spherical projection, not a flat cubemap
+
+The game renders stars onto a **spherical skybox** that the player views from inside. This explains:
+- Why edge stars show higher projection error (~13-16°) vs center stars (~2-4 pixels)
+- The characteristic curving motion of edge stars during walking
+- Why rectilinear projection is only an approximation
+
+**Practical implications:**
+- Rectilinear projection works well for stars near center of frame
+- For highest accuracy, mark reference stars away from screen edges
+- Edge accuracy matters less for triangulation since we primarily use centered stars

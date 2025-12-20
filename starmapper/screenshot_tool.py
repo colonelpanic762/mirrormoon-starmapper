@@ -12,8 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .calibration import (
-    StarMarker, CalibrationResult, calibrate_from_markers,
-    compute_direction_from_pixel, estimate_star_position, project_star_to_image
+    StarMarker, SphericalCalibration, calibrate_spherical,
+    compute_direction, estimate_star_position, project_star,
 )
 from .coords import Star
 
@@ -36,7 +36,7 @@ class ScreenshotSession:
     observer_pos: tuple[int, int, int]
     known_stars: dict[str, tuple[int, int, int]]  # name -> 3D coords
     markers: list[StarMarker] = field(default_factory=list)
-    calibration: CalibrationResult | None = None
+    calibration: SphericalCalibration | None = None
     pending_star_name: str | None = None
     # Estimation mode
     estimation_mode: bool = False
@@ -65,7 +65,7 @@ class ScreenshotSession:
             return False
 
         try:
-            self.calibration = calibrate_from_markers(
+            self.calibration = calibrate_spherical(
                 self.markers, self.observer_pos,
                 image_width, image_height
             )
@@ -157,16 +157,11 @@ def create_interactive_session(
         # If calibrated, show projected positions for known stars
         if session.calibration:
             for marker in session.markers:
-                px, py, vis = project_star_to_image(
+                px, py, vis = project_star(
                     np.array(marker.coords_3d, dtype=float),
                     np.array(session.observer_pos, dtype=float),
-                    session.calibration.azimuth,
-                    session.calibration.elevation,
-                    session.calibration.rotation,
-                    np.radians(session.calibration.fov_horizontal),
+                    session.calibration,
                     img_width, img_height,
-                    session.calibration.flip_horizontal,
-                    session.calibration.flip_vertical
                 )
                 if vis:
                     plot, = ax.plot(px, py, 'rx', markersize=10, markeredgewidth=2)
@@ -214,7 +209,7 @@ def create_interactive_session(
                 print("Must calibrate before estimating positions")
                 return
 
-            direction = compute_direction_from_pixel(
+            direction = compute_direction(
                 event.xdata, event.ydata,
                 session.calibration,
                 img_width, img_height
@@ -414,7 +409,7 @@ def estimate_from_click(
     if session.calibration is None:
         raise ValueError("Session must be calibrated first")
 
-    direction = compute_direction_from_pixel(
+    direction = compute_direction(
         pixel_x, pixel_y, session.calibration,
         image_width, image_height
     )

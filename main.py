@@ -318,6 +318,14 @@ def main():
         metavar="NAME",
         help="Observatory name for screenshot calibration (required with --calibrate-screenshot)",
     )
+    # Multi-image stitching
+    parser.add_argument(
+        "--stitch",
+        nargs='+',
+        type=Path,
+        metavar="IMAGE",
+        help="Stitch multiple screenshots to estimate unknown star positions",
+    )
     args = parser.parse_args()
 
     if not args.data.exists():
@@ -412,6 +420,53 @@ def main():
             on_calibration_complete=on_complete
         )
         plt.show()
+        return 0
+
+    # Handle multi-image stitching
+    if args.stitch:
+        if not args.screenshot_observatory:
+            print("\nError: --screenshot-observatory required with --stitch")
+            return 1
+
+        observer = find_star_by_name(stars, args.screenshot_observatory)
+        if observer is None:
+            print(f"\nError: Observatory '{args.screenshot_observatory}' not found")
+            return 1
+        if not observer.has_position:
+            print(f"\nError: Observatory '{observer.display_name}' has no known coordinates")
+            return 1
+
+        # Check all images exist
+        for img_path in args.stitch:
+            if not img_path.exists():
+                print(f"\nError: Image not found: {img_path}")
+                return 1
+
+        from starmapper.stitching_tool import run_stitching_tool
+        import matplotlib.pyplot as plt
+
+        print(f"\n== Multi-Image Stitching ==")
+        print(f"Observatory: {observer.display_name} at {observer.position}")
+        print(f"Images: {len(args.stitch)}")
+        for i, p in enumerate(args.stitch):
+            print(f"  {i + 1}. {p.name}")
+        print()
+        print("Instructions:")
+        print("  1. Select mode: 'Known Stars' or 'Correspondences'")
+        print("  2. Known Stars: Type name → click on star (must be in database)")
+        print("  3. Correspondences: Type label → click on star (any label)")
+        print("  4. Use ← → arrows or Prev/Next to switch images")
+        print("  5. Mark same unnamed stars with same label across images")
+        print("  6. Click 'Solve' when ready")
+        print()
+
+        def on_result(result):
+            print(f"\n✓ Stitching complete! {len(result.solutions)} solutions")
+            best = result.best_solution()
+            if best:
+                print(f"Best error: {best.total_error:.1f}")
+
+        session, state = run_stitching_tool(args.stitch, observer, stars)
         return 0
 
     # Handle calibration management

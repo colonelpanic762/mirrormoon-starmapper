@@ -17,10 +17,14 @@ import uuid
 from .coords import Star, Observation
 from .projection import (
     project_stars_from_observer,
+    project_stars_spherical,
     chart_to_direction,
+    chart_to_direction_spherical,
     ChartPosition,
     ViewState,
+    SphericalViewState,
 )
+from .calibration import SphericalCalibration
 
 
 class ClickState(Enum):
@@ -278,6 +282,123 @@ def show_observatory_view(
     """Plot and display the observatory view interactively."""
     plot_observatory_view(observer, stars, **kwargs)
     plt.show()
+
+
+def plot_observatory_view_spherical(
+    observer: Star,
+    stars: list[Star],
+    view: SphericalViewState,
+    show_labels: bool = True,
+    anomaly_position: tuple[float, float] | None = None,
+    fov_radius: float = 2.0,
+    figsize: tuple[int, int] = (12, 10),
+) -> plt.Figure:
+    """Create a 2D star chart using spherical moon model orientation.
+
+    This is the preferred function for visualization that matches the game's
+    actual camera model.
+
+    Args:
+        observer: Observatory star location
+        stars: All stars to potentially display
+        view: SphericalViewState with orientation parameters
+        show_labels: Whether to display star labels
+        anomaly_position: Optional (x, y) chart position of marked anomaly
+        fov_radius: Field of view radius in projection units
+        figsize: Figure size in inches
+
+    Returns:
+        matplotlib Figure object
+    """
+    # Project stars using spherical model
+    projected = project_stars_spherical(observer, stars, view)
+
+    # Create figure with dark background
+    fig, ax = plt.subplots(figsize=figsize, facecolor='#0d0d1a')
+    ax.set_facecolor('#0d0d1a')
+
+    # Plot stars
+    _plot_stars(ax, projected, show_labels, fov_radius)
+
+    # Plot anomaly marker if specified
+    if anomaly_position is not None:
+        _plot_anomaly(ax, anomaly_position)
+
+    # Plot a subtle circular border for the field of view
+    _plot_fov_border(ax, fov_radius)
+
+    # Style the chart with spherical params
+    _style_chart_spherical(ax, observer, fov_radius, view)
+
+    plt.tight_layout()
+    return fig
+
+
+def _style_chart_spherical(
+    ax: plt.Axes,
+    observer: Star,
+    fov_radius: float,
+    view: SphericalViewState,
+) -> None:
+    """Apply visual styling to the chart for spherical model."""
+    # Set axis limits with small margin
+    margin = fov_radius * 0.1
+    ax.set_xlim(-fov_radius - margin, fov_radius + margin)
+    ax.set_ylim(-fov_radius - margin, fov_radius + margin)
+    ax.set_aspect('equal')
+
+    # Hide axes for cleaner look
+    ax.axis('off')
+
+    # Add title with view info
+    yaw_deg = np.degrees(view.yaw)
+
+    title = f"Observatory View: {observer.display_name}"
+    subtitle = f"Yaw: {yaw_deg:.0f}°"
+
+    ax.set_title(
+        f"{title}\n{subtitle}",
+        color='white',
+        fontsize=12,
+        pad=10
+    )
+
+    # Add coordinate info at bottom
+    if observer.coordinates:
+        coord_text = f"Observer: ({observer.position[0]:.0f}, {observer.position[1]:.0f}, {observer.position[2]:.0f})"
+        ax.text(
+            0.5, -0.02,
+            coord_text,
+            transform=ax.transAxes,
+            ha='center',
+            va='top',
+            fontsize=9,
+            color='#666688'
+        )
+
+
+def show_observatory_view_spherical(
+    observer: Star,
+    stars: list[Star],
+    view: SphericalViewState,
+    **kwargs
+) -> None:
+    """Plot and display the observatory view using spherical model."""
+    plot_observatory_view_spherical(observer, stars, view, **kwargs)
+    plt.show()
+
+
+def _calculate_angular_distance_spherical(
+    pos1: tuple[float, float],
+    pos2: tuple[float, float],
+    view: SphericalViewState,
+) -> float:
+    """Calculate angular distance between two chart positions using spherical model."""
+    dir1 = chart_to_direction_spherical(pos1[0], pos1[1], view)
+    dir2 = chart_to_direction_spherical(pos2[0], pos2[1], view)
+
+    dot = np.clip(np.dot(dir1, dir2), -1.0, 1.0)
+    return float(np.arccos(dot))
 
 
 def _calculate_angular_distance(
@@ -550,3 +671,157 @@ def _angular_to_chart_radius(angular_distance: float, fov_radius: float) -> floa
     # The FOV radius of 2.0 corresponds to roughly 90 degrees (pi/2)
     # So 1 radian ≈ 2.0 / (pi/2) ≈ 1.27 chart units
     return angular_distance * (fov_radius / (np.pi / 2))
+
+
+def create_interactive_observatory_view_spherical(
+    observer: Star,
+    stars: list[Star],
+    view: SphericalViewState,
+    fov_radius: float = 2.0,
+    on_observation_complete: Callable[[Observation], None] | None = None,
+) -> tuple[plt.Figure, InteractiveState]:
+    """Create an interactive observatory view using spherical moon model.
+
+    This is the preferred interactive function that uses the game's actual
+    camera model. Can directly accept calibration results from the stitcher.
+
+    Two-click workflow:
+    1. First click marks the anomaly direction (center of uncertainty cone)
+    2. Second click sets the uncertainty radius (cone half-angle)
+
+    Args:
+        observer: Observatory star location
+        stars: All stars to potentially display
+        view: SphericalViewState with orientation (can be from calibration)
+        fov_radius: Field of view radius in projection units
+        on_observation_complete: Callback when observation is recorded
+
+    Returns:
+        Tuple of (figure, interactive_state)
+    """
+    # Create the base view
+    fig = plot_observatory_view_spherical(
+        observer=observer,
+        stars=stars,
+        view=view,
+        show_labels=True,
+        fov_radius=fov_radius,
+    )
+
+    ax = fig.axes[0]
+    state = InteractiveState()
+
+    # Initial status text
+    _update_status_text(ax, state, "Click to mark anomaly center")
+
+    def on_click(event):
+        """Handle mouse click events."""
+        # Ignore clicks when toolbar tools (zoom/pan) are active
+        toolbar = fig.canvas.manager.toolbar
+        if toolbar is not None and toolbar.mode != '':
+            return
+
+        # Only respond to left-click
+        if event.button != 1:
+            return
+
+        if event.inaxes != ax:
+            return
+
+        x, y = event.xdata, event.ydata
+
+        if state.click_state == ClickState.WAITING_FIRST_CLICK:
+            # First click: mark anomaly direction
+            state.first_click_pos = (x, y)
+
+            # Convert chart position to direction vector using spherical model
+            state.first_click_direction = chart_to_direction_spherical(x, y, view)
+
+            # Visual feedback
+            _add_crosshair_marker(ax, state, x, y)
+            _update_status_text(ax, state, "Click to set uncertainty radius")
+
+            state.click_state = ClickState.WAITING_SECOND_CLICK
+            fig.canvas.draw_idle()
+
+        elif state.click_state == ClickState.WAITING_SECOND_CLICK:
+            # Second click: set uncertainty radius
+            angular_distance = _calculate_angular_distance_spherical(
+                state.first_click_pos, (x, y), view
+            )
+
+            # Create the observation
+            # Store view state as spherical parameters for consistency
+            observation = Observation(
+                id=str(uuid.uuid4()),
+                observer_coordinates=observer.coordinates,
+                direction_vector=tuple(state.first_click_direction),
+                cone_half_angle=angular_distance,
+                timestamp=datetime.utcnow().isoformat() + "Z",
+                view_state={
+                    'up_theta': view.up_theta,
+                    'up_phi': view.up_phi,
+                    'yaw': view.yaw,
+                }
+            )
+
+            state.observation = observation
+            state.click_state = ClickState.OBSERVATION_COMPLETE
+
+            # Final visual: solid circle for recorded observation
+            if state.preview_circle is not None:
+                state.preview_circle.remove()
+
+            final_circle = patches.Circle(
+                state.first_click_pos,
+                radius=_angular_to_chart_radius(angular_distance, fov_radius),
+                fill=False,
+                color='#88ff88',
+                linewidth=2,
+                zorder=9
+            )
+            ax.add_patch(final_circle)
+            state.markers.append(final_circle)
+
+            # Update status
+            degrees = np.degrees(angular_distance)
+            _update_status_text(
+                ax, state,
+                f"✓ Observation recorded (cone half-angle: {degrees:.1f}°)"
+            )
+
+            fig.canvas.draw_idle()
+
+            # Callback
+            if on_observation_complete is not None:
+                on_observation_complete(observation)
+
+    def on_motion(event):
+        """Handle mouse motion for preview circle."""
+        if state.click_state != ClickState.WAITING_SECOND_CLICK:
+            return
+        if event.inaxes != ax:
+            return
+
+        x, y = event.xdata, event.ydata
+
+        # Calculate angular distance from first click
+        angular_distance = _calculate_angular_distance_spherical(
+            state.first_click_pos, (x, y), view
+        )
+
+        # Convert angular distance to chart radius for preview
+        chart_radius = _angular_to_chart_radius(angular_distance, fov_radius)
+        _update_preview_circle(ax, state, chart_radius)
+
+        # Update status with current angle
+        degrees = np.degrees(angular_distance)
+        _update_status_text(ax, state, f"Uncertainty radius: {degrees:.1f}° (click to confirm)")
+
+        fig.canvas.draw_idle()
+
+    # Connect event handlers
+    fig.canvas.mpl_connect('button_press_event', on_click)
+    fig.canvas.mpl_connect('motion_notify_event', on_motion)
+
+    return fig, state

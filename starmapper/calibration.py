@@ -2,6 +2,13 @@
 
 This module provides tools to determine camera FOV and view orientation
 by matching known star positions in screenshots to their projected positions.
+
+Uses the "spherical moon" camera model where:
+- The player walks on a tiny spherical moon
+- "Up" = local gravity (radial from moon center)
+- Camera always looks at the horizon (no pitch)
+- Camera is always level (no roll)
+- Only yaw (horizontal rotation) is controllable
 """
 
 import numpy as np
@@ -11,9 +18,50 @@ from scipy.optimize import minimize
 from .coords import Star, parse_coordinates
 
 
+# =============================================================================
+# Data Classes
+# =============================================================================
+
+@dataclass
+class SphericalCalibration:
+    """Calibration result using spherical moon camera model.
+
+    This represents the camera orientation on a spherical moon surface:
+    - up_theta, up_phi define the local "up" direction (gravity)
+    - yaw is the horizontal rotation around that up vector
+    - fov is the horizontal field of view
+    """
+    fov_horizontal: float  # Horizontal field of view in degrees
+    up_theta: float        # Polar angle of up vector (radians, 0=+Y, π=-Y)
+    up_phi: float          # Azimuthal angle of up vector (radians)
+    yaw: float             # Horizontal rotation around up (radians)
+    residual_error: float  # Mean pixel error after optimization
+
+    def up_vector(self) -> np.ndarray:
+        """Get the local up direction as a unit vector."""
+        return spherical_to_cartesian(self.up_theta, self.up_phi)
+
+    def forward_vector(self) -> np.ndarray:
+        """Get the forward (look) direction as a unit vector."""
+        forward, _, _ = build_camera_frame(self.up_theta, self.up_phi, self.yaw)
+        return forward
+
+    def __str__(self) -> str:
+        up = self.up_vector()
+        return (
+            f"FOV: {self.fov_horizontal:.1f}°\n"
+            f"Up: ({up[0]:.2f}, {up[1]:.2f}, {up[2]:.2f})\n"
+            f"Yaw: {np.degrees(self.yaw):.1f}°\n"
+            f"Residual error: {self.residual_error:.1f} pixels"
+        )
+
+
 @dataclass
 class CalibrationResult:
-    """Result of FOV/view calibration."""
+    """Legacy calibration result (deprecated, use SphericalCalibration).
+
+    Kept for backwards compatibility with old code.
+    """
     fov_horizontal: float  # Horizontal field of view in degrees
     azimuth: float         # View azimuth in radians
     elevation: float       # View elevation in radians
@@ -40,6 +88,217 @@ class StarMarker:
     pixel_x: float  # X position in image (0 = left)
     pixel_y: float  # Y position in image (0 = top)
     coords_3d: tuple[int, int, int]  # Known 3D coordinates
+
+
+# =============================================================================
+# Spherical Geometry Functions
+# =============================================================================
+
+def spherical_to_cartesian(theta: float, phi: float) -> np.ndarray:
+    """Convert spherical coordinates to unit vector.
+
+    Args:
+        theta: Polar angle from +Y axis (0 = up, π = down)
+        phi: Azimuthal angle in XZ plane from +X axis
+
+    Returns:
+        Unit vector [x, y, z]
+    """
+    return np.array([
+        np.sin(theta) * np.cos(phi),
+        np.cos(theta),
+        np.sin(theta) * np.sin(phi),
+    ])
+
+
+def build_camera_frame(
+    up_theta: float,
+    up_phi: float,
+    yaw: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Build camera coordinate frame from spherical parameters.
+
+    The camera model:
+    - "Up" is the local gravity direction (radial from moon center)
+    - "Forward" lies in the horizontal plane (perpendicular to up)
+    - "Right" completes the orthonormal frame
+    - Yaw rotates the forward direction around the up axis
+
+    Args:
+        up_theta: Polar angle of up vector (0 = +Y, π = -Y)
+        up_phi: Azimuthal angle of up vector
+        yaw: Horizontal rotation angle
+
+    Returns:
+        (forward, right, up) tuple of unit vectors
+    """
+    # Local "up" direction (gravity)
+    up = spherical_to_cartesian(up_theta, up_phi)
+
+    # Need a reference direction to define "forward" at yaw=0
+    # Use world +X projected onto the horizontal plane, unless up is parallel to X
+    world_ref = np.array([1.0, 0.0, 0.0])
+    if abs(np.dot(up, world_ref)) > 0.99:
+        # Up is nearly parallel to X, use Z instead
+        world_ref = np.array([0.0, 0.0, 1.0])
+
+    # Project reference onto horizontal plane (perpendicular to up)
+    forward_ref = world_ref - np.dot(world_ref, up) * up
+    forward_ref = forward_ref / np.linalg.norm(forward_ref)
+
+    # Right at yaw=0 (cross product gives perpendicular in horizontal plane)
+    right_ref = np.cross(forward_ref, up)
+    right_ref = right_ref / np.linalg.norm(right_ref)
+
+    # Apply yaw rotation around up axis
+    cos_y = np.cos(yaw)
+    sin_y = np.sin(yaw)
+    forward = cos_y * forward_ref + sin_y * right_ref
+    right = -sin_y * forward_ref + cos_y * right_ref
+
+    return forward, right, up
+
+
+def project_star(
+    star_pos: np.ndarray,
+    observer_pos: np.ndarray,
+    calibration: SphericalCalibration,
+    image_width: int,
+    image_height: int,
+) -> tuple[float, float, bool]:
+    """Project a star to image coordinates using spherical camera model.
+
+    Args:
+        star_pos: 3D position of the star
+        observer_pos: 3D position of the observer
+        calibration: SphericalCalibration with camera parameters
+        image_width, image_height: Image dimensions
+
+    Returns:
+        (pixel_x, pixel_y, visible) tuple
+    """
+    return project_star_raw(
+        star_pos, observer_pos,
+        calibration.up_theta, calibration.up_phi, calibration.yaw,
+        np.radians(calibration.fov_horizontal),
+        image_width, image_height,
+    )
+
+
+def project_star_raw(
+    star_pos: np.ndarray,
+    observer_pos: np.ndarray,
+    up_theta: float,
+    up_phi: float,
+    yaw: float,
+    fov_h: float,
+    image_width: int,
+    image_height: int,
+) -> tuple[float, float, bool]:
+    """Project a star to image coordinates (raw parameters version).
+
+    Args:
+        star_pos: 3D position of the star
+        observer_pos: 3D position of the observer
+        up_theta, up_phi: Spherical coords of local "up" vector
+        yaw: Horizontal rotation angle
+        fov_h: Horizontal field of view in radians
+        image_width, image_height: Image dimensions
+
+    Returns:
+        (pixel_x, pixel_y, visible) tuple
+    """
+    # Direction from observer to star
+    direction = star_pos - observer_pos
+    distance = np.linalg.norm(direction)
+    if distance < 1e-6:
+        return 0, 0, False
+    direction = direction / distance
+
+    # Build camera frame
+    forward, right, up = build_camera_frame(up_theta, up_phi, yaw)
+
+    # Project onto view plane (rectilinear projection)
+    depth = np.dot(direction, forward)
+    if depth <= 0:
+        return 0, 0, False
+
+    screen_x = np.dot(direction, right) / depth
+    screen_y = np.dot(direction, up) / depth
+
+    # Convert to pixel coordinates
+    scale = image_width / (2 * np.tan(fov_h / 2))
+    pixel_x = image_width / 2 + screen_x * scale
+    pixel_y = image_height / 2 - screen_y * scale  # Y flipped (0 at top)
+
+    # Check if in frame
+    visible = (0 <= pixel_x <= image_width and 0 <= pixel_y <= image_height)
+
+    return pixel_x, pixel_y, visible
+
+
+def compute_direction(
+    pixel_x: float,
+    pixel_y: float,
+    calibration: SphericalCalibration,
+    image_width: int,
+    image_height: int,
+) -> np.ndarray:
+    """Compute 3D direction from pixel position.
+
+    Inverse of project_star.
+
+    Args:
+        pixel_x, pixel_y: Pixel position in image
+        calibration: SphericalCalibration with camera parameters
+        image_width, image_height: Image dimensions
+
+    Returns:
+        Unit direction vector in world coordinates
+    """
+    return compute_direction_raw(
+        pixel_x, pixel_y,
+        calibration.up_theta, calibration.up_phi, calibration.yaw,
+        np.radians(calibration.fov_horizontal),
+        image_width, image_height,
+    )
+
+
+def compute_direction_raw(
+    pixel_x: float,
+    pixel_y: float,
+    up_theta: float,
+    up_phi: float,
+    yaw: float,
+    fov_h: float,
+    image_width: int,
+    image_height: int,
+) -> np.ndarray:
+    """Compute 3D direction from pixel position (raw parameters version).
+
+    Args:
+        pixel_x, pixel_y: Pixel position in image
+        up_theta, up_phi: Spherical coords of local "up" vector
+        yaw: Horizontal rotation angle
+        fov_h: Horizontal field of view in radians
+        image_width, image_height: Image dimensions
+
+    Returns:
+        Unit direction vector in world coordinates
+    """
+    # Build camera frame
+    forward, right, up = build_camera_frame(up_theta, up_phi, yaw)
+
+    # Convert pixel to screen coordinates (rectilinear)
+    scale = image_width / (2 * np.tan(fov_h / 2))
+    screen_x = (pixel_x - image_width / 2) / scale
+    screen_y = -(pixel_y - image_height / 2) / scale
+
+    # Direction in world space
+    direction = forward + screen_x * right + screen_y * up
+    direction = direction / np.linalg.norm(direction)
+
+    return direction
 
 
 def project_star_to_image(
@@ -252,6 +511,139 @@ def calibrate_from_markers(
     return best_result
 
 
+# =============================================================================
+# Spherical Calibration
+# =============================================================================
+
+def _spherical_calibration_error(
+    params: np.ndarray,
+    markers: list[StarMarker],
+    observer_pos: np.ndarray,
+    image_width: int,
+    image_height: int,
+) -> float:
+    """Compute total squared error for spherical calibration."""
+    fov_h, up_theta, up_phi, yaw = params
+
+    total_error = 0.0
+    for marker in markers:
+        star_pos = np.array(marker.coords_3d, dtype=float)
+        px, py, visible = project_star_raw(
+            star_pos, observer_pos,
+            up_theta, up_phi, yaw, fov_h,
+            image_width, image_height,
+        )
+
+        if not visible:
+            # Compute angular penalty to give gradient signal
+            direction = star_pos - observer_pos
+            direction = direction / np.linalg.norm(direction)
+            forward, _, _ = build_camera_frame(up_theta, up_phi, yaw)
+            dot = np.dot(direction, forward)
+            total_error += 10000 * (1 - dot)
+        else:
+            dx = px - marker.pixel_x
+            dy = py - marker.pixel_y
+            total_error += dx * dx + dy * dy
+
+    return total_error
+
+
+def calibrate_spherical(
+    markers: list[StarMarker],
+    observer_pos: tuple[int, int, int],
+    image_width: int,
+    image_height: int,
+    initial_fov: float = np.radians(90),
+) -> SphericalCalibration:
+    """Calibrate using spherical moon camera model.
+
+    This is the primary calibration function. It finds the camera orientation
+    (up direction + yaw) that best matches marked star positions.
+
+    Args:
+        markers: List of StarMarker objects (at least 2, preferably 3+)
+        observer_pos: Observer's 3D coordinates
+        image_width: Screenshot width in pixels
+        image_height: Screenshot height in pixels
+        initial_fov: Initial FOV guess in radians
+
+    Returns:
+        SphericalCalibration with optimized parameters
+    """
+    if len(markers) < 2:
+        raise ValueError("Need at least 2 marked stars for calibration")
+
+    obs_pos = np.array(observer_pos, dtype=float)
+
+    # Compute average direction to stars for initial yaw guess
+    star_directions = []
+    for m in markers:
+        vec = np.array(m.coords_3d) - obs_pos
+        vec = vec / np.linalg.norm(vec)
+        star_directions.append(vec)
+
+    avg_dir = np.mean(star_directions, axis=0)
+    avg_dir = avg_dir / np.linalg.norm(avg_dir)
+    init_yaw = np.arctan2(avg_dir[2], avg_dir[0])
+
+    # Try multiple initial up vector orientations
+    init_up_configs = [
+        (np.pi / 2, 0.0),       # Up toward +X
+        (np.pi / 2, np.pi/2),   # Up toward +Z
+        (np.pi / 2, np.pi),     # Up toward -X
+        (np.pi / 2, -np.pi/2),  # Up toward -Z
+        (0.1, 0.0),             # Up toward +Y
+        (np.pi - 0.1, 0.0),     # Up toward -Y
+    ]
+
+    best_result = None
+    best_error = float('inf')
+
+    for init_up_theta, init_up_phi in init_up_configs:
+        # Initial parameters: [fov, up_theta, up_phi, yaw]
+        x0 = np.array([initial_fov, init_up_theta, init_up_phi, init_yaw])
+
+        bounds = [
+            (np.radians(70), np.radians(110)),  # FOV
+            (0.01, np.pi - 0.01),                # up_theta (avoid poles)
+            (-np.pi, np.pi),                     # up_phi
+            (-np.pi, np.pi),                     # yaw
+        ]
+
+        try:
+            result = minimize(
+                _spherical_calibration_error,
+                x0,
+                args=(markers, obs_pos, image_width, image_height),
+                method='L-BFGS-B',
+                bounds=bounds,
+                options={'maxiter': 1000}
+            )
+
+            if result.fun < best_error:
+                best_error = result.fun
+                best_result = result
+
+        except Exception:
+            continue
+
+    if best_result is None:
+        raise ValueError("Calibration failed to converge")
+
+    return SphericalCalibration(
+        fov_horizontal=np.degrees(best_result.x[0]),
+        up_theta=best_result.x[1],
+        up_phi=best_result.x[2],
+        yaw=best_result.x[3],
+        residual_error=np.sqrt(best_error / len(markers)),
+    )
+
+
+# =============================================================================
+# Legacy Functions (for backwards compatibility)
+# =============================================================================
+
 def compute_direction_from_pixel(
     pixel_x: float,
     pixel_y: float,
@@ -259,10 +651,12 @@ def compute_direction_from_pixel(
     image_width: int,
     image_height: int,
 ) -> np.ndarray:
-    """Convert a pixel position to a 3D direction vector.
+    """Convert a pixel position to a 3D direction vector (legacy version).
 
     This is the inverse of projection - given where a star appears
     in the image, compute the direction it lies in.
+
+    Note: For new code, use compute_direction() with SphericalCalibration.
 
     Args:
         pixel_x: X position in image

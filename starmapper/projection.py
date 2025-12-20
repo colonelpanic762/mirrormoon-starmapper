@@ -9,12 +9,19 @@ Coordinate conventions:
 - Azimuth: 0 = +X direction, increases counterclockwise when viewed from +Y
 - Elevation: 0 = horizon (XZ plane), +90° = zenith (+Y direction)
 - Chart: Origin at center of view, X increases right, Y increases up
+
+Orientation models:
+- Legacy: (azimuth, elevation, rotation) - direct control of look direction
+- Spherical: (up_theta, up_phi, yaw) - "Roomba on sphere" moon walking model
 """
 
 from dataclasses import dataclass
 import numpy as np
 
 from .coords import Star
+from .calibration import (
+    SphericalCalibration, spherical_to_cartesian, build_camera_frame,
+)
 
 
 @dataclass
@@ -28,7 +35,7 @@ class ChartPosition:
 
 @dataclass
 class ViewState:
-    """Current viewing orientation for the observatory."""
+    """Current viewing orientation for the observatory (legacy model)."""
     azimuth: float = 0.0        # Horizontal look direction [0, 2*pi)
     elevation: float = np.pi/4  # Vertical look direction [-pi/2, pi/2]
     rotation: float = 0.0       # Roll angle [0, 2*pi)
@@ -48,6 +55,89 @@ class ViewState:
     def roll(self, delta: float) -> None:
         """Roll the view."""
         self.rotation = (self.rotation + delta) % (2 * np.pi)
+
+
+@dataclass
+class SphericalViewState:
+    """Viewing orientation using spherical moon model.
+
+    This models how MirrorMoon EP actually works:
+    - Player walks on a tiny spherical moon
+    - "Up" is always radial (local gravity)
+    - Camera is always level (no pitch or roll)
+    - Only yaw (horizontal rotation) is controllable
+    """
+    up_theta: float = np.pi / 2   # Polar angle of up vector (0=+Y, π=-Y)
+    up_phi: float = 0.0           # Azimuthal angle of up vector
+    yaw: float = 0.0              # Horizontal rotation around up
+
+    def walk(self, forward_delta: float, right_delta: float) -> None:
+        """Walk on the moon surface (W/S/A/D keys).
+
+        This changes the "up" vector (moves your position on the moon).
+        The game moves at ~10°/sec, so typical delta might be 0.01-0.05 radians.
+        """
+        # Get current camera frame
+        forward, right, up = build_camera_frame(self.up_theta, self.up_phi, self.yaw)
+
+        # Move the up vector by walking in forward/right direction
+        # Small angle approximation: new_up ≈ up + delta * direction
+        delta_up = forward_delta * forward + right_delta * right
+        new_up = up + delta_up
+        new_up = new_up / np.linalg.norm(new_up)
+
+        # Convert back to spherical
+        self.up_theta = np.arccos(np.clip(new_up[1], -1, 1))
+        self.up_phi = np.arctan2(new_up[2], new_up[0])
+
+    def rotate(self, delta: float) -> None:
+        """Rotate the view horizontally (yaw)."""
+        self.yaw = (self.yaw + delta) % (2 * np.pi)
+
+    def to_projection_params(self) -> tuple[float, float, float]:
+        """Convert to (azimuth, elevation, rotation) for stereographic projection.
+
+        Returns:
+            (center_azimuth, center_elevation, rotation) tuple
+        """
+        # Get camera frame
+        forward, right, up = build_camera_frame(self.up_theta, self.up_phi, self.yaw)
+
+        # Forward direction gives center azimuth and elevation
+        center_azimuth = np.arctan2(forward[2], forward[0])
+        center_elevation = np.arcsin(np.clip(forward[1], -1, 1))
+
+        # Rotation: angle between projection's default up and our up
+        # Project our "up" onto the tangent plane at "forward"
+        up_projected = up - np.dot(up, forward) * forward
+        if np.linalg.norm(up_projected) < 1e-6:
+            rotation = 0.0
+        else:
+            up_projected = up_projected / np.linalg.norm(up_projected)
+
+            # Default projection up: global Y projected onto tangent plane
+            default_up = np.array([0.0, 1.0, 0.0])
+            default_up_proj = default_up - np.dot(default_up, forward) * forward
+            if np.linalg.norm(default_up_proj) < 1e-6:
+                # Looking straight up or down
+                default_up_proj = np.array([1.0, 0.0, 0.0])
+            default_up_proj = default_up_proj / np.linalg.norm(default_up_proj)
+
+            # Compute right vector for angle measurement
+            right_vec = np.cross(forward, default_up_proj)
+            right_vec = right_vec / np.linalg.norm(right_vec)
+
+            # Rotation is angle from default_up_proj to our up_projected
+            cos_rot = np.dot(up_projected, default_up_proj)
+            sin_rot = np.dot(up_projected, right_vec)
+            rotation = np.arctan2(sin_rot, cos_rot)
+
+        return center_azimuth, center_elevation, rotation
+
+    @classmethod
+    def from_calibration(cls, cal: SphericalCalibration) -> "SphericalViewState":
+        """Create view state from a SphericalCalibration."""
+        return cls(up_theta=cal.up_theta, up_phi=cal.up_phi, yaw=cal.yaw)
 
 
 def compute_direction_vectors(
@@ -329,3 +419,50 @@ def chart_to_direction(
     direction = direction / np.linalg.norm(direction)
 
     return direction
+
+
+# =============================================================================
+# Spherical Model Functions
+# =============================================================================
+
+def project_stars_spherical(
+    observer: Star,
+    stars: list[Star],
+    view: SphericalViewState,
+) -> list[tuple[Star, ChartPosition]]:
+    """Project all stars using spherical moon model orientation.
+
+    This is the preferred function for visualization that matches the game's
+    actual camera model.
+
+    Args:
+        observer: The Star object representing the observatory location
+        stars: List of stars to project
+        view: SphericalViewState with orientation parameters
+
+    Returns:
+        List of (star, chart_position) tuples for stars with known coordinates
+    """
+    center_azimuth, center_elevation, rotation = view.to_projection_params()
+    return project_stars_from_observer(
+        observer, stars, center_azimuth, center_elevation, rotation
+    )
+
+
+def chart_to_direction_spherical(
+    x: float,
+    y: float,
+    view: SphericalViewState,
+) -> np.ndarray:
+    """Convert chart position to 3D direction using spherical model.
+
+    Args:
+        x: Horizontal chart coordinate
+        y: Vertical chart coordinate
+        view: SphericalViewState with orientation parameters
+
+    Returns:
+        Unit vector in galaxy coordinate system
+    """
+    center_azimuth, center_elevation, rotation = view.to_projection_params()
+    return chart_to_direction(x, y, center_azimuth, center_elevation, rotation)
