@@ -32,6 +32,51 @@ class StitchingToolState:
     result: StitchingResult | None = None
 
 
+def _print_navigation_results(session: StitchingSession, result: StitchingResult) -> None:
+    """Print stitching results in a navigation-friendly format.
+
+    Outputs to console with 9-digit coordinates that can be directly
+    copied into the navigation tool.
+    """
+    labels = session.get_all_correspondence_labels()
+    if not labels:
+        return
+
+    print("\n" + "=" * 60)
+    print("ESTIMATED STAR POSITIONS (for navigation)")
+    print("=" * 60)
+
+    best = result.best_solution()
+    if not best:
+        print("No solution available")
+        return
+
+    print(f"Solution error: {best.total_error:.1f} (known={best.known_star_error:.1f}, corr={best.correspondence_error:.1f})")
+    print(f"Shared FOV: {best.fov_horizontal:.1f}°" if hasattr(best, 'fov_horizontal') else f"Shared FOV: {best.calibrations[0].fov_horizontal:.1f}°")
+    print("-" * 60)
+
+    for label in sorted(labels):
+        estimates = estimate_star_from_stitching(result, label)
+        if not estimates:
+            print(f"\n{label}: No estimate available")
+            continue
+
+        pos, uncertainty, direction, _ = estimates[0]
+
+        # Format as 9-digit coordinate string for navigation
+        coord_str = f"{pos[0]:03d}{pos[1]:03d}{pos[2]:03d}"
+
+        print(f"\n{label}:")
+        print(f"  Coordinates: {coord_str}  ← copy this for --navigate")
+        print(f"  Position:    ({pos[0]}, {pos[1]}, {pos[2]})")
+        print(f"  Uncertainty: ±{uncertainty:.0f} PC")
+        print(f"  Direction:   ({direction[0]:.4f}, {direction[1]:.4f}, {direction[2]:.4f})")
+
+    print("\n" + "=" * 60)
+    print("Usage: python main.py --navigate <COORDS> --data data/stars.json")
+    print("=" * 60 + "\n")
+
+
 def create_stitching_tool(
     image_paths: list[str | Path],
     observer: Star,
@@ -352,6 +397,9 @@ def create_stitching_tool(
             print(f"\nFound {len(state.result.solutions)} solutions")
             if on_result:
                 on_result(state.result)
+
+            # Print results in navigation-friendly format
+            _print_navigation_results(session, state.result)
         else:
             print("No valid solutions found")
 
