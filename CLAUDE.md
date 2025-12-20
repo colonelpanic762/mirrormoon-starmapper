@@ -205,6 +205,7 @@ These are explicitly deferred—not part of current milestones:
 - **Auto-generated star names**: Generate systematic names for discovered stars using their exact coordinates encoded as three pairs of base-36 digits (0-9, A-Z). Example: star at (123, 456, 789) → "3FCOLX". Fits exactly within the game's 6-character player name limit (by design!). Include a decoder to convert base-36 names back to coordinates for stars not yet in the database.
 - **Directional indicators on observatory view**: Show compass-like arrows indicating which direction +/- azimuth and +/- elevation adjustments will move the view. Essential when rotation and flip settings are applied, since the mapping becomes non-intuitive.
 - **Navigate to known stars by name**: Allow `--navigate BENCHI` to look up coordinates from the star database, in addition to original names and raw coordinates.
+- **Adaptive navigation calibration**: Enhance interactive navigation (`--navigate-interactive`) to refine the ship orientation calibration as you travel. Each position update provides new constraint data that can improve accuracy. Requires: (1) overshoot detection to avoid corrupting calibration when you pass the target, (2) divergence detection to recognize when calibration error is growing rather than shrinking and trigger a recalibration prompt. The goal is progressively more accurate "turn left/right" guidance as you home in on the target.
 
 ## Multi-Image Stitching Design (Coordinate Prediction)
 
