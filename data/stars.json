@@ -446,42 +446,6 @@
   ],
   "observations": [
     {
-      "id": "f96769d7-61a5-4ee1-81a4-b8a4afb46b6f",
-      "observer_coordinates": "590949307",
-      "direction_vector": [
-        -0.6634300775249884,
-        -0.6334864331679927,
-        0.3981902450177331
-      ],
-      "cone_half_angle": 0.10020292951643663,
-      "timestamp": "2025-12-13T15:22:40.817948Z",
-      "view_state": {
-        "azimuth": 3.141592653589793,
-        "elevation": -0.5235987755982988,
-        "rotation": 1.5707963267948966,
-        "flip_horizontal": true,
-        "flip_vertical": false
-      }
-    },
-    {
-      "id": "bfc233f9-1884-45f5-a56e-172b1ae84d33",
-      "observer_coordinates": "591584428",
-      "direction_vector": [
-        -0.8436676561657183,
-        0.2676296941284252,
-        0.4654022268539002
-      ],
-      "cone_half_angle": 0.0744271968711029,
-      "timestamp": "2025-12-13T16:05:33.263961Z",
-      "view_state": {
-        "azimuth": 1.5707963267948966,
-        "elevation": 0.7853981633974483,
-        "rotation": 4.014257279586958,
-        "flip_horizontal": false,
-        "flip_vertical": true
-      }
-    },
-    {
       "id": "c11d39bc-735b-4db4-b36e-d59e3defb02a",
       "observer_coordinates": "639502146",
       "direction_vector": [
@@ -496,6 +460,23 @@
         "session": "stitch-OBSERV.json",
         "label": "ANOMALY",
         "fov_horizontal": 83.87025854606998
+      }
+    },
+    {
+      "id": "4bc53f28-97da-4bf3-983e-4dba2eba15ca",
+      "observer_coordinates": "591584428",
+      "direction_vector": [
+        -0.8610784136276488,
+        0.231886445992577,
+        0.45251811206781906
+      ],
+      "cone_half_angle": 0.00909413490743522,
+      "timestamp": "2026-10-10T21:35:25.027381Z",
+      "view_state": {
+        "source": "stitching",
+        "session": "stitch-OBS007.json",
+        "label": "ANOMALY",
+        "fov_horizontal": 83.77247712184618
       }
     }
   ],
