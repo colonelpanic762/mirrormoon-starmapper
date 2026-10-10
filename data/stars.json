@@ -478,6 +478,23 @@
         "label": "ANOMALY",
         "fov_horizontal": 83.77247712184618
       }
+    },
+    {
+      "id": "07ef8b78-0f1f-423e-aae1-3f980a7f1407",
+      "observer_coordinates": "590949307",
+      "direction_vector": [
+        -0.6196259377855352,
+        -0.5490079915912388,
+        0.5609402128501312
+      ],
+      "cone_half_angle": 0.004986908940570895,
+      "timestamp": "2026-10-10T21:41:03.629814Z",
+      "view_state": {
+        "source": "stitching",
+        "session": "stitch-OBS1.json",
+        "label": "ANOMALY",
+        "fov_horizontal": 83.43097868543332
+      }
     }
   ],
   "nav_calibration": {

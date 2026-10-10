@@ -1,0 +1,30 @@
+{
+  "observatory": "OBS1",
+  "images": [
+    {
+      "path": "OBS1.jpg",
+      "width": 1280,
+      "height": 800,
+      "known": {
+        "GIOVAN": [
+          1047.7,
+          606.9
+        ],
+        "AUY/14": [
+          596.1,
+          89.4
+        ],
+        "DAV21": [
+          324.6,
+          58.3
+        ]
+      },
+      "correspondences": {
+        "ANOMALY": [
+          661.2,
+          428.8
+        ]
+      }
+    }
+  ]
+}
