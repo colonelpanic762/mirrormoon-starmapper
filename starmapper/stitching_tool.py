@@ -15,6 +15,7 @@ from typing import Callable
 from .stitching import (
     StitchingSession, ImageMarking, CorrespondenceMarker,
     StitchingResult, solve_stitching, estimate_star_from_stitching,
+    build_known_stars, save_session,
 )
 from .calibration import (
     StarMarker, spherical_to_cartesian, project_star_raw,
@@ -51,7 +52,7 @@ def _print_navigation_results(session: StitchingSession, result: StitchingResult
         print("No solution available")
         return
 
-    print(f"Solution error: {best.total_error:.1f} (known={best.known_star_error:.1f}, corr={best.correspondence_error:.1f})")
+    print(f"Solution RMS error: {best.total_error:.2f}° (known={best.known_star_error:.2f}°, corr={best.correspondence_error:.2f}°)")
     print(f"Shared FOV: {best.fov_horizontal:.1f}°" if hasattr(best, 'fov_horizontal') else f"Shared FOV: {best.calibrations[0].fov_horizontal:.1f}°")
     print("-" * 60)
 
@@ -82,45 +83,47 @@ def create_stitching_tool(
     observer: Star,
     stars: list[Star],
     on_result: Callable[[StitchingResult], None] | None = None,
+    session: StitchingSession | None = None,
+    session_path: Path | None = None,
 ) -> tuple[plt.Figure, StitchingSession, StitchingToolState]:
     """Create an interactive multi-image stitching tool.
 
     Args:
-        image_paths: List of screenshot paths to stitch
+        image_paths: List of screenshot paths to stitch (ignored if session given)
         observer: The Star object for the observatory
         stars: List of all stars (for looking up coordinates)
         on_result: Callback when stitching is solved
+        session: Existing session (from load_session) to continue marking
+        session_path: If set, markings are saved here after every change
 
     Returns:
         (figure, session, state) tuple
     """
-    image_paths = [Path(p) for p in image_paths]
+    if session is not None:
+        image_paths = [img.image_path for img in session.images]
+    else:
+        image_paths = [Path(p) for p in image_paths]
 
     if not image_paths:
         raise ValueError("Need at least one image")
 
-    # Build dict of known star coordinates
-    known_stars = {}
-    for star in stars:
-        if star.has_position and star.coordinates != observer.coordinates:
-            name = star.player_name or star.original_name
-            if name:
-                known_stars[name] = star.position
-
-    session = StitchingSession(
-        observer_pos=observer.position,
-        known_stars=known_stars,
-    )
-
     state = StitchingToolState()
 
-    # Load all images and add to session
-    images_data = []
-    for path in image_paths:
-        img = mpimg.imread(str(path))
-        height, width = img.shape[:2]
-        session.add_image(path, width, height)
-        images_data.append(img)
+    # Load all images (and add to session if starting fresh)
+    images_data = [mpimg.imread(str(path)) for path in image_paths]
+    if session is None:
+        session = StitchingSession(
+            observer_pos=observer.position,
+            known_stars=build_known_stars(stars, observer),
+            observatory_name=observer.display_name,
+        )
+        for path, img in zip(image_paths, images_data):
+            height, width = img.shape[:2]
+            session.add_image(path, width, height)
+
+    def autosave():
+        if session_path is not None:
+            save_session(session, session_path)
 
     # Create figure with space for controls
     fig, ax = plt.subplots(figsize=(16, 10))
@@ -242,9 +245,9 @@ def create_stitching_tool(
         best = state.result.best_solution()
 
         lines.append(f"Solutions found: {len(state.result.solutions)}")
-        lines.append(f"Best error: {best.total_error:.1f}")
-        lines.append(f"  Known: {best.known_star_error:.1f}")
-        lines.append(f"  Corr: {best.correspondence_error:.1f}")
+        lines.append(f"RMS error: {best.total_error:.2f}°")
+        lines.append(f"  Known: {best.known_star_error:.2f}°")
+        lines.append(f"  Corr: {best.correspondence_error:.2f}°")
         lines.append("")
 
         # Show shared FOV (same for all images)
@@ -291,6 +294,7 @@ def create_stitching_tool(
             print(f"Marked correspondence {state.pending_name} at ({px:.0f}, {py:.0f})")
 
         state.pending_name = None
+        autosave()
         update_display()
 
     def on_key(event):
@@ -391,8 +395,7 @@ def create_stitching_tool(
             print("Need at least 1 known-position star marked")
             return
 
-        # Use fixed FOV=90 and pitch=30 (game's known values) to reduce DOF
-        state.result = solve_stitching(session, fixed_fov=90.0, fixed_pitch=30.0)
+        state.result = solve_stitching(session, fixed_pitch=30.0)
 
         if state.result.solutions:
             print(f"\nFound {len(state.result.solutions)} solutions")
@@ -419,6 +422,7 @@ def create_stitching_tool(
             img.correspondence_markers = []
         state.result = None
         state.pending_name = None
+        autosave()
         update_results_panel()
         update_display()
 
@@ -440,14 +444,21 @@ def run_stitching_tool(
     image_paths: list[str | Path],
     observer: Star,
     stars: list[Star],
+    session: StitchingSession | None = None,
+    session_path: Path | None = None,
 ):
     """Run the stitching tool interactively.
 
     Args:
-        image_paths: List of screenshot paths
+        image_paths: List of screenshot paths (ignored if session given)
         observer: Observatory star
         stars: All known stars
+        session: Existing session to continue marking
+        session_path: If set, markings are saved here after every change
     """
-    fig, session, state = create_stitching_tool(image_paths, observer, stars)
+    fig, session, state = create_stitching_tool(
+        image_paths, observer, stars,
+        session=session, session_path=session_path,
+    )
     plt.show()
     return session, state

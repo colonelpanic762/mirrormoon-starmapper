@@ -1,0 +1,92 @@
+{
+  "observatory": "OBSERV",
+  "images": [
+    {
+      "path": "OBSERV-anomaly1.jpg",
+      "width": 1280,
+      "height": 800,
+      "known": {
+        "UMA": [
+          660,
+          72
+        ],
+        "DERVOT": [
+          157,
+          487
+        ],
+        "KLORIA": [
+          546,
+          610
+        ],
+        "VOID6": [
+          1021,
+          357
+        ]
+      },
+      "correspondences": {
+        "DERVOT-ST": [
+          226,
+          402
+        ],
+        "VOID6-IP": [
+          1017,
+          282
+        ],
+        "ANOMALY": [
+          813.5,
+          166.3
+        ]
+      }
+    },
+    {
+      "path": "OBSERV-anomaly2.jpg",
+      "width": 1280,
+      "height": 800,
+      "known": {
+        "VOID6": [
+          750,
+          340
+        ],
+        "IAY/53": [
+          221,
+          519
+        ]
+      },
+      "correspondences": {
+        "VOID6-IP": [
+          805,
+          375
+        ],
+        "ANOMALY": [
+          1036.0,
+          303.1
+        ]
+      }
+    },
+    {
+      "path": "OBSERV-active-observatory.jpg",
+      "width": 1280,
+      "height": 800,
+      "known": {
+        "UTA/99": [
+          641,
+          120
+        ],
+        "DERVOT": [
+          883,
+          136
+        ],
+        "KLORIA": [
+          1082,
+          502
+        ]
+      },
+      "correspondences": {
+        "DERVOT-ST": [
+          996,
+          101
+        ]
+      }
+    }
+  ]
+}

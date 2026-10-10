@@ -7,26 +7,31 @@ reference stars are split across different images.
 Uses the "spherical moon" camera model where:
 - The player walks on a tiny spherical moon at ~10°/sec
 - "Up" = local gravity = radial direction from moon center
-- Camera always looks at the horizon (no pitch)
+- Camera has a fixed upward pitch - shared across images
 - Camera is always level (no roll)
-- Only yaw (horizontal rotation) is controllable
+- Only yaw (horizontal rotation) is controllable per-image
+
+Local "up" plus yaw spans every 3D rotation, so each image's orientation is
+fitted as a free rotation and then expressed in these terms.
 """
 
+import json
+import os
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Callable
-from scipy.optimize import minimize
+from scipy.optimize import minimize_scalar
 from pathlib import Path
 
 from .calibration import (
     SphericalCalibration, StarMarker,
-    spherical_to_cartesian, build_camera_frame,
+    camera_frame_to_params,
     project_star_raw, compute_direction_raw,
 )
 
 
 # =============================================================================
-# Note: Core spherical geometry functions (spherical_to_cartesian, build_camera_frame,
+# Note: Core spherical geometry functions (camera_frame_to_params,
 # project_star_raw, compute_direction_raw) are imported from calibration.py
 # =============================================================================
 
@@ -62,6 +67,7 @@ class StitchingSession:
     observer_pos: tuple[int, int, int]
     known_stars: dict[str, tuple[int, int, int]]  # name -> 3D coords
     images: list[ImageMarking] = field(default_factory=list)
+    observatory_name: str | None = None  # Saved in session files
 
     def add_image(self, path: Path, width: int, height: int) -> int:
         """Add an image and return its index."""
@@ -133,6 +139,79 @@ class StitchingSession:
         return {k: v for k, v in by_label.items() if len(v) >= 2}
 
 
+def build_known_stars(stars, observer) -> dict[str, tuple[int, int, int]]:
+    """Build name -> 3D coords dict of all positioned stars except the observer."""
+    known_stars = {}
+    for star in stars:
+        if star.has_position and star.coordinates != observer.coordinates:
+            name = star.player_name or star.original_name
+            if name:
+                known_stars[name] = star.position
+    return known_stars
+
+
+def save_session(session: StitchingSession, path: Path) -> None:
+    """Save a session's images and markings to a JSON file.
+
+    Image paths are stored relative to the session file. Known-star
+    coordinates are not stored; they are looked up again on load.
+    """
+    path = Path(path)
+    data = {
+        "observatory": session.observatory_name,
+        "images": [
+            {
+                "path": os.path.relpath(img.image_path, path.parent),
+                "width": img.image_width,
+                "height": img.image_height,
+                "known": {
+                    m.name: [round(m.pixel_x, 1), round(m.pixel_y, 1)]
+                    for m in img.known_markers
+                },
+                "correspondences": {
+                    m.label: [round(m.pixel_x, 1), round(m.pixel_y, 1)]
+                    for m in img.correspondence_markers
+                },
+            }
+            for img in session.images
+        ],
+    }
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def load_session(path: Path, observer, stars) -> StitchingSession:
+    """Load a session saved by save_session.
+
+    Args:
+        path: Session JSON file
+        observer: The Star object for the observatory
+        stars: List of all stars (for looking up known-star coordinates)
+
+    Raises:
+        ValueError: If a known marker names a star with no coordinates
+    """
+    path = Path(path)
+    data = json.loads(path.read_text())
+
+    session = StitchingSession(
+        observer_pos=observer.position,
+        known_stars=build_known_stars(stars, observer),
+        observatory_name=data.get("observatory"),
+    )
+
+    for img in data["images"]:
+        idx = session.add_image(path.parent / img["path"], img["width"], img["height"])
+        for name, (px, py) in img.get("known", {}).items():
+            if not session.add_known_marker(idx, name, px, py):
+                raise ValueError(
+                    f"{path}: star '{name}' in image {idx} has no known coordinates"
+                )
+        for label, (px, py) in img.get("correspondences", {}).items():
+            session.add_correspondence(idx, label, px, py)
+
+    return session
+
+
 @dataclass
 class StitchingSolution:
     """A solution from the spherical moon camera model."""
@@ -181,182 +260,150 @@ class StitchingResult:
         return rays
 
 
-def _project_star_with_depth(
-    star_pos: np.ndarray,
-    observer_pos: np.ndarray,
-    up_theta: float,
-    up_phi: float,
-    yaw: float,
-    pitch: float,
+def _pixel_to_camera_ray(
+    pixel_x: float,
+    pixel_y: float,
     fov_h: float,
     image_width: int,
     image_height: int,
-) -> tuple[float, float, float]:
-    """Project star and return (pixel_x, pixel_y, depth).
-
-    Unlike project_star_raw, this always returns coordinates
-    even if outside image bounds, and returns depth for penalty calculation.
-    Uses rectilinear (pinhole) projection.
-    """
-    direction = star_pos - observer_pos
-    distance = np.linalg.norm(direction)
-    if distance < 1e-6:
-        return 0, 0, -1  # Invalid
-    direction = direction / distance
-
-    forward, right, up = build_camera_frame(up_theta, up_phi, yaw, pitch)
-
-    depth = np.dot(direction, forward)
-    if depth <= 0.01:  # Behind or at camera
-        return 0, 0, depth
-
-    # Rectilinear projection
-    screen_x = np.dot(direction, right) / depth
-    screen_y = np.dot(direction, up) / depth
-
+) -> np.ndarray:
+    """Unit ray for a pixel in camera coordinates (right, up, forward)."""
     scale = image_width / (2 * np.tan(fov_h / 2))
-    pixel_x = image_width / 2 + screen_x * scale
-    pixel_y = image_height / 2 - screen_y * scale
+    ray = np.array([
+        (pixel_x - image_width / 2) / scale,
+        -(pixel_y - image_height / 2) / scale,
+        1.0,
+    ])
+    return ray / np.linalg.norm(ray)
 
-    return pixel_x, pixel_y, depth
 
+def _fit_rotation(world_dirs: np.ndarray, camera_rays: np.ndarray) -> np.ndarray:
+    """Best rotation R with R @ world_dir ~= camera_ray (Wahba's problem, via SVD).
 
-def _stitching_error_spherical(
-    params: np.ndarray,
-    session: StitchingSession,
-    cross_correspondences: dict[str, list[tuple[int, CorrespondenceMarker]]],
-    correspondence_weight: float = 1.0,
-) -> float:
-    """Compute total error for multi-image stitching using spherical model.
-
-    params layout: [fov, pitch, up_theta_0, up_phi_0, yaw_0, up_theta_1, ...]
-    - fov: shared FOV in radians
-    - pitch: shared upward tilt from horizon (radians)
-    - up_theta_i, up_phi_i: spherical coords of local "up" vector for image i
-    - yaw_i: horizontal rotation for image i
+    The rows of R are the camera's right, up and forward axes in world
+    coordinates. R is a proper rotation, which matches the left-handed
+    frame of build_camera_frame (right = up x forward).
     """
-    n_images = len(session.images)
+    u, _, vt = np.linalg.svd(camera_rays.T @ world_dirs)
+    d = np.diag([1.0, 1.0, np.sign(np.linalg.det(u @ vt))])
+    return u @ d @ vt
+
+
+def _angles_deg(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Angle in degrees between matching rows of two arrays of unit vectors."""
+    return np.degrees(np.arccos(np.clip(np.sum(a * b, axis=1), -1, 1)))
+
+
+def _fit_images(
+    session: StitchingSession,
+    fov_h: float,
+    cross_correspondences: dict[str, list[tuple[int, CorrespondenceMarker]]],
+) -> tuple[list[np.ndarray | None], np.ndarray, np.ndarray]:
+    """Fit a rotation per image at a given FOV.
+
+    Images with 2+ known stars are fitted directly. Images with fewer are
+    then fitted using correspondences to already-fitted images as extra
+    reference directions, repeating until no more images can be chained in.
+
+    Returns:
+        (rotations, known_residuals, correspondence_residuals), where
+        rotations has None for images that could not be fitted and the
+        residuals are angles in degrees.
+    """
     obs_pos = np.array(session.observer_pos, dtype=float)
+    n_images = len(session.images)
+    rotations: list[np.ndarray | None] = [None] * n_images
 
-    total_known_error = 0.0
-    total_corr_error = 0.0
-    total_orientation_error = 0.0
+    def ray(img: ImageMarking, marker) -> np.ndarray:
+        return _pixel_to_camera_ray(
+            marker.pixel_x, marker.pixel_y, fov_h, img.image_width, img.image_height
+        )
 
-    fov_h = params[0]
-    pitch = params[1]
+    known_world = []
+    known_rays = []
+    for img in session.images:
+        world = [np.array(m.coords_3d, dtype=float) - obs_pos for m in img.known_markers]
+        known_world.append([w / np.linalg.norm(w) for w in world])
+        known_rays.append([ray(img, m) for m in img.known_markers])
 
-    # Per-image known star errors
-    for i, img in enumerate(session.images):
-        base = 2 + i * 3  # Skip FOV and pitch, then 3 params per image
-        up_theta = params[base]
-        up_phi = params[base + 1]
-        yaw = params[base + 2]
+    def correspondence_directions() -> dict[str, np.ndarray]:
+        """Mean world direction per label, from images fitted so far."""
+        result = {}
+        for label, occurrences in cross_correspondences.items():
+            dirs = [
+                rotations[idx].T @ ray(session.images[idx], marker)
+                for idx, marker in occurrences
+                if rotations[idx] is not None
+            ]
+            if dirs:
+                mean = np.mean(dirs, axis=0)
+                result[label] = mean / np.linalg.norm(mean)
+        return result
 
-        # Build camera frame once for this image
-        forward, right, camera_up = build_camera_frame(up_theta, up_phi, yaw, pitch)
+    progress = True
+    while progress:
+        progress = False
+        linked = correspondence_directions()
+        for i, img in enumerate(session.images):
+            if rotations[i] is not None:
+                continue
+            world = list(known_world[i])
+            rays = list(known_rays[i])
+            # Only fall back on correspondences when known stars aren't enough
+            if len(world) < 2:
+                for m in img.correspondence_markers:
+                    if m.label in linked:
+                        world.append(linked[m.label])
+                        rays.append(ray(img, m))
+            if len(world) >= 2:
+                rotations[i] = _fit_rotation(np.array(world), np.array(rays))
+                progress = True
 
-        for marker in img.known_markers:
-            star_pos = np.array(marker.coords_3d, dtype=float)
-            direction = star_pos - obs_pos
-            direction = direction / np.linalg.norm(direction)
+    known_residuals = []
+    for i in range(n_images):
+        if rotations[i] is not None and known_world[i]:
+            projected = np.array(known_world[i]) @ rotations[i].T
+            known_residuals.extend(_angles_deg(projected, np.array(known_rays[i])))
 
-            px, py, depth = _project_star_with_depth(
-                star_pos, obs_pos,
-                up_theta, up_phi, yaw, pitch, fov_h,
-                img.image_width, img.image_height,
-            )
-
-            if depth <= 0.01:
-                # Star is behind camera - very large penalty plus angular error
-                # to give gradient signal toward correct orientation
-                dot = np.dot(direction, forward)
-                # Strong penalty that increases as star goes more behind
-                total_known_error += 100000 * (1 - dot)
-            else:
-                # Star is in front - compute pixel error (even if outside bounds)
-                dx = px - marker.pixel_x
-                dy = py - marker.pixel_y
-                total_known_error += dx * dx + dy * dy
-
-            # ALWAYS check orientation (whether star is in front or behind)
-            # Stars in upper half of image should have positive up_comp
-            up_comp = np.dot(direction, camera_up)
-            in_upper_half = marker.pixel_y < img.image_height / 2
-
-            # If orientation is wrong, add VERY LARGE penalty
-            # Must be larger than any possible pixel error to force correct orientation
-            if in_upper_half and up_comp < 0:
-                # Star should be above horizon but isn't - HUGE penalty
-                total_orientation_error += 1000000 * (1.0 + abs(up_comp))
-            elif not in_upper_half and up_comp > 0:
-                # Star should be below horizon but isn't - HUGE penalty
-                total_orientation_error += 1000000 * (1.0 + abs(up_comp))
-
-    # Cross-image correspondence errors
+    corr_residuals = []
+    linked = correspondence_directions()
     for label, occurrences in cross_correspondences.items():
-        if len(occurrences) < 2:
-            continue
+        for idx, marker in occurrences:
+            if rotations[idx] is not None:
+                direction = rotations[idx].T @ ray(session.images[idx], marker)
+                corr_residuals.extend(_angles_deg(direction[None, :], linked[label][None, :]))
 
-        # Compute direction for each occurrence
-        directions = []
-        for img_idx, marker in occurrences:
-            img = session.images[img_idx]
-            base = 2 + img_idx * 3
-            up_theta = params[base]
-            up_phi = params[base + 1]
-            yaw = params[base + 2]
-
-            direction = compute_direction_raw(
-                marker.pixel_x, marker.pixel_y,
-                up_theta, up_phi, yaw, pitch, fov_h,
-                img.image_width, img.image_height,
-            )
-            directions.append(direction)
-
-        # Penalize variance in directions
-        mean_dir = np.mean(directions, axis=0)
-        mean_dir = mean_dir / np.linalg.norm(mean_dir)
-
-        for d in directions:
-            dot = np.clip(np.dot(d, mean_dir), -1, 1)
-            angle = np.arccos(dot)
-            # Convert to "pixel-equivalent" error (~10 pixels per degree)
-            pixel_equiv = np.degrees(angle) * 10
-            total_corr_error += pixel_equiv * pixel_equiv
-
-    return total_known_error + correspondence_weight * total_corr_error + total_orientation_error
+    return rotations, np.array(known_residuals), np.array(corr_residuals)
 
 
 def solve_stitching(
     session: StitchingSession,
-    initial_fov: float = 90.0,
-    initial_pitch: float = 25.0,
     fixed_fov: float | None = None,  # If set, FOV won't be optimized
-    fixed_pitch: float | None = None,  # If set, pitch won't be optimized
+    fixed_pitch: float = 0.0,
     correspondence_weight: float = 0.1,  # Reduced: prioritize known stars
     progress_callback: Callable[[str], None] | None = None,
 ) -> StitchingResult:
-    """Solve multi-image stitching problem using spherical moon model.
+    """Solve multi-image stitching problem.
 
-    The spherical model assumes:
-    - Player walks on a tiny moon surface
-    - "Up" = local gravity (radial from moon center)
-    - Camera has fixed upward pitch (like a wedge under it)
-    - Camera always level (no roll freedom)
-    - Only yaw (horizontal rotation) is controllable
+    Each image's camera orientation is a free 3D rotation, fitted in closed
+    form from its known stars (see _fit_rotation). All images share one FOV,
+    found by a 1D search unless fixed_fov is given.
 
-    Each image has 3 parameters: up_theta, up_phi (local up direction), yaw.
-    All images share FOV and pitch parameters.
+    A shared camera pitch cannot be measured from the star fit: local "up"
+    plus yaw already spans every rotation. fixed_pitch only decides how each
+    fitted orientation is split into a local "up" vector and a yaw.
 
     Args:
         session: StitchingSession with marked images
-        initial_fov: Initial FOV guess in degrees (default 90°)
-        initial_pitch: Initial upward pitch guess in degrees (default 25°)
-        correspondence_weight: Weight for correspondence errors vs known star errors
+        fixed_fov: Horizontal FOV in degrees, or None to fit it
+        fixed_pitch: Assumed upward camera pitch in degrees
+        correspondence_weight: Weight for correspondence errors vs known star
+            errors when fitting the FOV
         progress_callback: Optional callback for progress updates
 
     Returns:
-        StitchingResult with solutions sorted by error
+        StitchingResult with one solution, or none if some image has too few
+        markers to be fitted. Solution errors are RMS angles in degrees.
     """
     if not session.images:
         return StitchingResult(session=session, solutions=[])
@@ -371,246 +418,49 @@ def solve_stitching(
         else:
             print(msg)
 
-    log(f"Solving stitching for {n_images} images using spherical moon model...")
+    log(f"Solving stitching for {n_images} images...")
 
-    # Debug: show what directions known stars are in
-    for i, img in enumerate(session.images):
-        if img.known_markers:
-            log(f"  Image {i} known stars:")
-            for m in img.known_markers:
-                vec = np.array(m.coords_3d) - obs_pos
-                vec = vec / np.linalg.norm(vec)
-                log(f"    {m.name}: dir=({vec[0]:.3f}, {vec[1]:.3f}, {vec[2]:.3f}), "
-                    f"pixel=({m.pixel_x:.0f}, {m.pixel_y:.0f})")
+    def rms(values: np.ndarray) -> float:
+        return float(np.sqrt(np.mean(values ** 2))) if len(values) else 0.0
 
-    # Compute initial camera direction from known stars
-    # We need to find up vectors that put the stars IN FRONT of the camera
-    per_image_avg_dir = []
-    for img in session.images:
-        if img.known_markers:
-            # Compute average direction to known stars
-            directions = []
-            for m in img.known_markers:
-                vec = np.array(m.coords_3d) - obs_pos
-                vec = vec / np.linalg.norm(vec)
-                directions.append(vec)
-            avg_dir = np.mean(directions, axis=0)
-            avg_dir = avg_dir / np.linalg.norm(avg_dir)
-            per_image_avg_dir.append(avg_dir)
+    def cost(fov_h: float) -> float:
+        rotations, known_res, corr_res = _fit_images(session, fov_h, cross_correspondences)
+        if any(r is None for r in rotations):
+            return float('inf')
+        return float(np.sum(known_res ** 2) + correspondence_weight * np.sum(corr_res ** 2))
+
+    if fixed_fov is not None:
+        fov_h = np.radians(fixed_fov)
+    else:
+        # Coarse scan first: the cost is not guaranteed to have a single minimum
+        candidates = np.radians(np.arange(40.0, 140.1, 2.0))
+        costs = [cost(f) for f in candidates]
+        if not np.isfinite(min(costs)):
+            fov_h = np.radians(90.0)
         else:
-            per_image_avg_dir.append(np.array([0.0, 0.0, 1.0]))
+            coarse = candidates[int(np.argmin(costs))]
+            step = np.radians(2.0)
+            fov_h = minimize_scalar(
+                cost, bounds=(coarse - step, coarse + step), method='bounded',
+            ).x
 
-    # Global average direction (where stars generally are)
-    global_avg_dir = np.mean(per_image_avg_dir, axis=0)
-    global_avg_dir = global_avg_dir / np.linalg.norm(global_avg_dir)
-    log(f"Average star direction: ({global_avg_dir[0]:.3f}, {global_avg_dir[1]:.3f}, {global_avg_dir[2]:.3f})")
+    rotations, known_res, corr_res = _fit_images(session, fov_h, cross_correspondences)
 
-    # Generate initial up vectors that are PERPENDICULAR to the viewing direction
-    # This ensures the stars will be in front of the camera
-    def generate_perpendicular_ups(view_dir):
-        """Generate up vectors perpendicular to a viewing direction."""
-        ups = []
-        # Try world Y as up (if not parallel to view_dir)
-        world_y = np.array([0.0, 1.0, 0.0])
-        if abs(np.dot(view_dir, world_y)) < 0.9:
-            up = world_y - np.dot(world_y, view_dir) * view_dir
-            up = up / np.linalg.norm(up)
-            ups.append(up)
-            ups.append(-up)
-        # Try world X as reference
-        world_x = np.array([1.0, 0.0, 0.0])
-        if abs(np.dot(view_dir, world_x)) < 0.9:
-            up = world_x - np.dot(world_x, view_dir) * view_dir
-            up = up / np.linalg.norm(up)
-            ups.append(up)
-            ups.append(-up)
-        # Try world Z as reference
-        world_z = np.array([0.0, 0.0, 1.0])
-        if abs(np.dot(view_dir, world_z)) < 0.9:
-            up = world_z - np.dot(world_z, view_dir) * view_dir
-            up = up / np.linalg.norm(up)
-            ups.append(up)
-            ups.append(-up)
-        return ups
-
-    candidate_ups = generate_perpendicular_ups(global_avg_dir)
-    log(f"Generated {len(candidate_ups)} candidate up vectors perpendicular to view")
-
-    # Convert up vectors to spherical coordinates
-    def up_to_spherical(up):
-        """Convert up unit vector to (theta, phi) spherical coords."""
-        # up = (sin(theta)*cos(phi), cos(theta), sin(theta)*sin(phi))
-        theta = np.arccos(np.clip(up[1], -1, 1))
-        phi = np.arctan2(up[2], up[0])
-        return theta, phi
-
-    init_up_configs = []
-    for up in candidate_ups:
-        theta, phi = up_to_spherical(up)
-        init_up_configs.append((theta, phi))
-
-    # Also add the original configurations as fallback
-    init_up_configs.extend([
-        (np.pi / 2, 0.0),      # Up pointing toward +X
-        (np.pi / 2, np.pi/2),  # Up pointing toward +Z
-        (np.pi / 2, np.pi),    # Up pointing toward -X
-        (np.pi / 2, -np.pi/2), # Up pointing toward -Z
-        (0.1, 0.0),            # Up pointing toward +Y (nearly)
-        (np.pi - 0.1, 0.0),    # Up pointing toward -Y (nearly)
-    ])
-
-    log(f"Trying {len(init_up_configs)} initial configurations")
-
-    best_result = None
-    best_error = float('inf')
-
-    for init_up_theta, init_up_phi in init_up_configs:
-        # Build initial parameters: [fov, pitch, up_theta_0, up_phi_0, yaw_0, ...]
-        # Use fixed values if provided, otherwise use initial guesses with bounds
-        fov_val = np.radians(fixed_fov if fixed_fov is not None else initial_fov)
-        pitch_val = np.radians(fixed_pitch if fixed_pitch is not None else initial_pitch)
-        x0 = [fov_val, pitch_val]
-
-        # If fixed, use very tight bounds (effectively constant)
-        if fixed_fov is not None:
-            fov_bounds = (fov_val - 0.001, fov_val + 0.001)
-        else:
-            fov_bounds = (np.radians(70), np.radians(120))
-
-        if fixed_pitch is not None:
-            pitch_bounds = (pitch_val - 0.001, pitch_val + 0.001)
-        else:
-            pitch_bounds = (np.radians(10), np.radians(45))
-
-        bounds = [fov_bounds, pitch_bounds]
-
-        # For each image, compute a per-image up vector that's perpendicular
-        # to that image's star directions (so stars will be in front)
-        for i in range(n_images):
-            avg_dir = per_image_avg_dir[i]
-
-            # Use the template up vector, but if this image has stars in
-            # a very different direction, adjust the up to be perpendicular
-            init_up = spherical_to_cartesian(init_up_theta, init_up_phi)
-
-            # Check if the template up is roughly perpendicular to star direction
-            dot_with_stars = abs(np.dot(init_up, avg_dir))
-            if dot_with_stars > 0.7:
-                # Template up is too aligned with stars - generate a perpendicular one
-                # using the image's star direction
-                world_y = np.array([0.0, 1.0, 0.0])
-                if abs(np.dot(avg_dir, world_y)) < 0.9:
-                    init_up = world_y - np.dot(world_y, avg_dir) * avg_dir
-                else:
-                    world_x = np.array([1.0, 0.0, 0.0])
-                    init_up = world_x - np.dot(world_x, avg_dir) * avg_dir
-                init_up = init_up / np.linalg.norm(init_up)
-                img_up_theta, img_up_phi = up_to_spherical(init_up)
-            else:
-                img_up_theta = init_up_theta
-                img_up_phi = init_up_phi
-
-            # Project average star direction onto the horizontal plane (perpendicular to up)
-            horiz_component = avg_dir - np.dot(avg_dir, init_up) * init_up
-            horiz_norm = np.linalg.norm(horiz_component)
-
-            if horiz_norm > 0.1:
-                horiz_component = horiz_component / horiz_norm
-
-                # Compute reference forward at yaw=0
-                world_ref = np.array([1.0, 0.0, 0.0])
-                if abs(np.dot(init_up, world_ref)) > 0.99:
-                    world_ref = np.array([0.0, 0.0, 1.0])
-                forward_ref = world_ref - np.dot(world_ref, init_up) * init_up
-                forward_ref = forward_ref / np.linalg.norm(forward_ref)
-                right_ref = np.cross(forward_ref, init_up)
-                right_ref = right_ref / np.linalg.norm(right_ref)
-
-                # Yaw angle to point toward the horizontal component of stars
-                yaw = np.arctan2(np.dot(horiz_component, right_ref),
-                                np.dot(horiz_component, forward_ref))
-            else:
-                yaw = 0.0
-
-            # Check if up vector orientation is correct for this image
-            # by verifying that stars in upper half of image have positive up_comp
-            img = session.images[i]
-            if img.known_markers:
-                # Build camera frame with current params to check orientation
-                forward_test, right_test, camera_up_test = build_camera_frame(
-                    img_up_theta, img_up_phi, yaw, pitch_val
-                )
-
-                # Count orientation agreements
-                correct_orientation = 0
-                wrong_orientation = 0
-                for marker in img.known_markers:
-                    star_dir = np.array(marker.coords_3d) - obs_pos
-                    star_dir = star_dir / np.linalg.norm(star_dir)
-                    up_comp = np.dot(star_dir, camera_up_test)
-
-                    # Expected: upper half (pixel_y < center) -> up_comp > 0
-                    in_upper_half = marker.pixel_y < img.image_height / 2
-                    up_comp_positive = up_comp > 0
-
-                    if in_upper_half == up_comp_positive:
-                        correct_orientation += 1
-                    else:
-                        wrong_orientation += 1
-
-                # If mostly wrong, flip the up vector
-                if wrong_orientation > correct_orientation:
-                    init_up = -init_up
-                    img_up_theta, img_up_phi = up_to_spherical(init_up)
-                    # Yaw stays the same direction but we need to recalculate
-                    # since up flipped, forward direction should flip too
-                    yaw = yaw + np.pi  # Rotate 180° to maintain forward direction
-                    if yaw > np.pi:
-                        yaw -= 2 * np.pi
-
-            x0.extend([img_up_theta, img_up_phi, yaw])
-            bounds.extend([
-                (0.01, np.pi - 0.01),  # up_theta: avoid poles
-                (-np.pi, np.pi),       # up_phi: full circle
-                (-np.pi, np.pi),       # yaw: full circle
-            ])
-
-        x0 = np.array(x0)
-
-        try:
-            result = minimize(
-                _stitching_error_spherical,
-                x0,
-                args=(session, cross_correspondences, correspondence_weight),
-                method='L-BFGS-B',
-                bounds=bounds,
-                options={'maxiter': 1000},
-            )
-
-            if result.fun < best_error:
-                best_error = result.fun
-                best_result = result
-
-        except Exception as e:
-            log(f"Optimization failed for init ({init_up_theta:.2f}, {init_up_phi:.2f}): {e}")
-            continue
-
-    if best_result is None:
+    unsolved = [i for i, r in enumerate(rotations) if r is None]
+    if unsolved:
+        for i in unsolved:
+            log(f"  Image {i}: not enough markers (need 2+ known stars, or "
+                f"correspondences linking it to a solved image)")
         log("No valid solution found")
         return StitchingResult(session=session, solutions=[])
 
-    # Build solution from best result
+    fov_deg = np.degrees(fov_h)
+    pitch_rad = np.radians(fixed_pitch)
+
     calibrations = []
-    fov_deg = np.degrees(best_result.x[0])
-    pitch_rad = best_result.x[1]
-    pitch_deg = np.degrees(pitch_rad)
-
-    for i in range(n_images):
-        base = 2 + i * 3  # Skip FOV and pitch
-        up_theta = best_result.x[base]
-        up_phi = best_result.x[base + 1]
-        yaw = best_result.x[base + 2]
-
+    for rotation in rotations:
+        right, camera_up, forward = rotation
+        up_theta, up_phi, yaw = camera_frame_to_params(forward, right, camera_up, pitch_rad)
         calibrations.append(SphericalCalibration(
             fov_horizontal=fov_deg,
             up_theta=up_theta,
@@ -620,32 +470,26 @@ def solve_stitching(
             residual_error=0,
         ))
 
-    # Compute separate error components
-    known_error = _stitching_error_spherical(
-        best_result.x, session, {}, 0
-    )
-    corr_error = best_result.fun - known_error
-
     solution = StitchingSolution(
         calibrations=calibrations,
-        total_error=best_result.fun,
-        known_star_error=known_error,
-        correspondence_error=corr_error,
+        total_error=rms(np.concatenate([known_res, corr_res])),
+        known_star_error=rms(known_res),
+        correspondence_error=rms(corr_res),
     )
 
-    log(f"\nBest solution: error={best_result.fun:.1f} "
-        f"(known={known_error:.1f}, corr={corr_error:.1f})")
-    log(f"  Shared FOV: {fov_deg:.1f}°, Pitch: {pitch_deg:.1f}°")
+    log(f"\nSolution: RMS error={solution.total_error:.2f}° "
+        f"(known={solution.known_star_error:.2f}°, corr={solution.correspondence_error:.2f}°)")
+    log(f"  Shared FOV: {fov_deg:.1f}°{' (fixed)' if fixed_fov is not None else ''}, "
+        f"assumed pitch: {fixed_pitch:.1f}°")
     for i, cal in enumerate(calibrations):
-        up = spherical_to_cartesian(cal.up_theta, cal.up_phi)
-        forward, right, _ = build_camera_frame(cal.up_theta, cal.up_phi, cal.yaw, cal.pitch)
+        up = cal.up_vector()
+        forward = cal.forward_vector()
         log(f"  Image {i}: up=({up[0]:.2f}, {up[1]:.2f}, {up[2]:.2f}), "
             f"yaw={np.degrees(cal.yaw):.1f}°")
         log(f"    forward=({forward[0]:.2f}, {forward[1]:.2f}, {forward[2]:.2f})")
 
-    # Debug: show where known stars project to with this solution
+    # Show where known stars project to with this solution
     log("\nProjection check for known stars:")
-    fov_h = np.radians(fov_deg)
     for i, img in enumerate(session.images):
         cal = calibrations[i]
         for m in img.known_markers:
@@ -655,17 +499,13 @@ def solve_stitching(
                 cal.up_theta, cal.up_phi, cal.yaw, cal.pitch, fov_h,
                 img.image_width, img.image_height,
             )
-            dx = px - m.pixel_x if visible else float('inf')
-            dy = py - m.pixel_y if visible else float('inf')
-            err = np.sqrt(dx*dx + dy*dy) if visible else float('inf')
+            err = np.hypot(px - m.pixel_x, py - m.pixel_y) if visible else float('inf')
             log(f"  Image {i} {m.name}: marked=({m.pixel_x:.0f},{m.pixel_y:.0f}), "
-                f"projected=({px:.0f},{py:.0f}), visible={visible}, err={err:.1f}")
+                f"projected=({px:.0f},{py:.0f}), visible={visible}, err={err:.1f}px")
 
-    # Debug: show correspondence direction agreement
+    # Show correspondence direction agreement
     log("\nCorrespondence direction check:")
     for label, occurrences in cross_correspondences.items():
-        if len(occurrences) < 2:
-            continue
         directions = []
         for img_idx, marker in occurrences:
             img = session.images[img_idx]

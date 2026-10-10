@@ -172,6 +172,38 @@ def build_camera_frame(
     return forward, right, camera_up
 
 
+def camera_frame_to_params(
+    forward: np.ndarray,
+    right: np.ndarray,
+    camera_up: np.ndarray,
+    pitch: float = 0.0,
+) -> tuple[float, float, float]:
+    """Inverse of build_camera_frame: recover (up_theta, up_phi, yaw).
+
+    Args:
+        forward, right, camera_up: Orthonormal camera axes (right = up x forward)
+        pitch: Upward tilt assumed when splitting camera_up from local "up"
+
+    Returns:
+        (up_theta, up_phi, yaw) such that build_camera_frame reproduces the axes
+    """
+    # Undo the pitch rotation around the right axis
+    cos_p = np.cos(pitch)
+    sin_p = np.sin(pitch)
+    up = sin_p * forward + cos_p * camera_up
+    forward_horiz = cos_p * forward - sin_p * camera_up
+
+    # up = (sin(theta)*cos(phi), cos(theta), sin(theta)*sin(phi))
+    up_theta = np.arccos(np.clip(up[1], -1, 1))
+    up_phi = np.arctan2(up[2], up[0])
+
+    # Same yaw=0 reference as build_camera_frame
+    forward_ref, right_ref, _ = build_camera_frame(up_theta, up_phi, 0.0, 0.0)
+    yaw = np.arctan2(np.dot(forward_horiz, right_ref), np.dot(forward_horiz, forward_ref))
+
+    return up_theta, up_phi, yaw
+
+
 def project_star(
     star_pos: np.ndarray,
     observer_pos: np.ndarray,

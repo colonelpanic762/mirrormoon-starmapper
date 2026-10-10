@@ -326,6 +326,17 @@ def main():
         metavar="IMAGE",
         help="Stitch multiple screenshots to estimate unknown star positions",
     )
+    parser.add_argument(
+        "--stitch-session",
+        type=Path,
+        metavar="FILE",
+        help="Session file for stitch markings: loaded if it exists, saved after every mark",
+    )
+    parser.add_argument(
+        "--stitch-solve",
+        action="store_true",
+        help="Solve the --stitch-session file and print results without opening the GUI",
+    )
     args = parser.parse_args()
 
     if not args.data.exists():
@@ -423,24 +434,55 @@ def main():
         return 0
 
     # Handle multi-image stitching
-    if args.stitch:
-        if not args.screenshot_observatory:
+    if args.stitch_solve and not args.stitch_session:
+        print("\nError: --stitch-session required with --stitch-solve")
+        return 1
+
+    if args.stitch or args.stitch_session:
+        have_session_file = bool(args.stitch_session and args.stitch_session.exists())
+        if not have_session_file and (args.stitch_solve or not args.stitch):
+            print(f"\nError: Session file not found: {args.stitch_session}")
+            return 1
+
+        observatory_name = args.screenshot_observatory
+        if not observatory_name and have_session_file:
+            observatory_name = json.loads(args.stitch_session.read_text()).get("observatory")
+        if not observatory_name:
             print("\nError: --screenshot-observatory required with --stitch")
             return 1
 
-        observer = find_star_by_name(stars, args.screenshot_observatory)
+        observer = find_star_by_name(stars, observatory_name)
         if observer is None:
-            print(f"\nError: Observatory '{args.screenshot_observatory}' not found")
+            print(f"\nError: Observatory '{observatory_name}' not found")
             return 1
         if not observer.has_position:
             print(f"\nError: Observatory '{observer.display_name}' has no known coordinates")
             return 1
+
+        session = None
+        if have_session_file:
+            from starmapper.stitching import load_session
+            session = load_session(args.stitch_session, observer, stars)
+            args.stitch = [img.image_path for img in session.images]
+            print(f"\nLoaded stitching session from {args.stitch_session}")
 
         # Check all images exist
         for img_path in args.stitch:
             if not img_path.exists():
                 print(f"\nError: Image not found: {img_path}")
                 return 1
+
+        if args.stitch_solve:
+            from starmapper.stitching import solve_stitching
+            from starmapper.stitching_tool import _print_navigation_results
+
+            # Same settings as the GUI's Solve button
+            result = solve_stitching(session, fixed_pitch=30.0)
+            if not result.solutions:
+                print("No valid solutions found")
+                return 1
+            _print_navigation_results(session, result)
+            return 0
 
         from starmapper.stitching_tool import run_stitching_tool
         import matplotlib.pyplot as plt
@@ -464,9 +506,12 @@ def main():
             print(f"\n✓ Stitching complete! {len(result.solutions)} solutions")
             best = result.best_solution()
             if best:
-                print(f"Best error: {best.total_error:.1f}")
+                print(f"RMS error: {best.total_error:.2f}°")
 
-        session, state = run_stitching_tool(args.stitch, observer, stars)
+        session, state = run_stitching_tool(
+            args.stitch, observer, stars,
+            session=session, session_path=args.stitch_session,
+        )
         return 0
 
     # Handle calibration management
