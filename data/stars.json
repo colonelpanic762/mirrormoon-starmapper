@@ -480,6 +480,23 @@
         "flip_horizontal": false,
         "flip_vertical": true
       }
+    },
+    {
+      "id": "c11d39bc-735b-4db4-b36e-d59e3defb02a",
+      "observer_coordinates": "639502146",
+      "direction_vector": [
+        -0.5949205088707529,
+        0.2784458663781047,
+        0.7540142489515109
+      ],
+      "cone_half_angle": 0.006290401503504645,
+      "timestamp": "2026-10-10T21:28:05.476057Z",
+      "view_state": {
+        "source": "stitching",
+        "session": "stitch-OBSERV.json",
+        "label": "ANOMALY",
+        "fov_horizontal": 83.87025854606998
+      }
     }
   ],
   "nav_calibration": {

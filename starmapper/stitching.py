@@ -231,6 +231,39 @@ class StitchingResult:
         """Get the lowest-error solution."""
         return self.solutions[0] if self.solutions else None
 
+    def label_direction(self, label: str) -> tuple[np.ndarray, float] | None:
+        """Mean direction to a correspondence label under the best solution.
+
+        Averages over every image the label is marked in.
+
+        Returns:
+            (unit_direction, spread) where spread is the largest angle in
+            radians between the mean and any single image's direction
+            (0 if marked in only one image), or None if the label is unmarked.
+        """
+        best = self.best_solution()
+        if best is None:
+            return None
+
+        directions = []
+        for idx, img in enumerate(self.session.images):
+            marker = img.get_correspondence(label)
+            if marker:
+                cal = best.calibrations[idx]
+                directions.append(compute_direction_raw(
+                    marker.pixel_x, marker.pixel_y,
+                    cal.up_theta, cal.up_phi, cal.yaw, cal.pitch,
+                    np.radians(cal.fov_horizontal),
+                    img.image_width, img.image_height,
+                ))
+        if not directions:
+            return None
+
+        mean = np.mean(directions, axis=0)
+        mean = mean / np.linalg.norm(mean)
+        spread = max(np.arccos(np.clip(np.dot(d, mean), -1, 1)) for d in directions)
+        return mean, float(spread)
+
     def get_direction_rays(
         self,
         label: str,

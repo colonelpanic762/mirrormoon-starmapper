@@ -91,6 +91,67 @@ def save_observation(data_path: Path, observation: Observation) -> None:
     temp_path.rename(data_path)
 
 
+def save_stitched_observation(
+    data_path: Path,
+    observer: Star,
+    result,
+    label: str,
+    session_path: Path,
+) -> Observation | None:
+    """Save a stitching result's direction to a label as an anomaly observation.
+
+    Replaces any observation previously saved from the same session file and
+    label, so re-running a solve does not pile up duplicates.
+
+    Returns the saved Observation, or None if the label is not marked.
+    """
+    from datetime import datetime, timezone
+    import uuid
+
+    found = result.label_direction(label)
+    if found is None:
+        return None
+    direction, spread = found
+    best = result.best_solution()
+
+    # Uncertainty: the worse of the reference-star fit and the disagreement
+    # between images about where the labelled star is
+    cone_half_angle = max(np.radians(best.known_star_error), spread)
+
+    source = {
+        "source": "stitching",
+        "session": session_path.name,
+        "label": label,
+    }
+    observation = Observation(
+        observer_coordinates=observer.coordinates,
+        direction_vector=tuple(float(c) for c in direction),
+        cone_half_angle=float(cone_half_angle),
+        timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        id=str(uuid.uuid4()),
+        view_state={**source, "fov_horizontal": best.calibrations[0].fov_horizontal},
+    )
+
+    with open(data_path) as f:
+        data = json.load(f)
+
+    def from_same_source(obs_data: dict) -> bool:
+        view_state = obs_data.get("view_state") or {}
+        return all(view_state.get(k) == v for k, v in source.items())
+
+    data["observations"] = [
+        o for o in data.get("observations", []) if not from_same_source(o)
+    ]
+    data["observations"].append(observation.to_dict())
+
+    temp_path = data_path.with_suffix('.json.tmp')
+    with open(temp_path, 'w') as f:
+        json.dump(data, f, indent=2)
+    temp_path.rename(data_path)
+
+    return observation
+
+
 def clear_all_observations(data_path: Path) -> int:
     """Remove all observations. Returns count deleted."""
     with open(data_path) as f:
@@ -337,6 +398,13 @@ def main():
         action="store_true",
         help="Solve the --stitch-session file and print results without opening the GUI",
     )
+    parser.add_argument(
+        "--stitch-save-observation",
+        type=str,
+        metavar="LABEL",
+        help="With --stitch-solve: save the direction to this correspondence label "
+             "(e.g. ANOMALY) as an observation for --triangulate",
+    )
     args = parser.parse_args()
 
     if not args.data.exists():
@@ -437,6 +505,9 @@ def main():
     if args.stitch_solve and not args.stitch_session:
         print("\nError: --stitch-session required with --stitch-solve")
         return 1
+    if args.stitch_save_observation and not args.stitch_solve:
+        print("\nError: --stitch-solve required with --stitch-save-observation")
+        return 1
 
     if args.stitch or args.stitch_session:
         have_session_file = bool(args.stitch_session and args.stitch_session.exists())
@@ -482,6 +553,19 @@ def main():
                 print("No valid solutions found")
                 return 1
             _print_navigation_results(session, result)
+
+            if args.stitch_save_observation:
+                label = args.stitch_save_observation.upper()
+                observation = save_stitched_observation(
+                    args.data, observer, result, label, args.stitch_session,
+                )
+                if observation is None:
+                    print(f"Error: '{label}' is not marked in this session")
+                    return 1
+                d = observation.direction_vector
+                print(f"✓ Saved observation of {label} from {observer.display_name}")
+                print(f"  Direction: ({d[0]:.4f}, {d[1]:.4f}, {d[2]:.4f})")
+                print(f"  Cone half-angle: {np.degrees(observation.cone_half_angle):.2f}°")
             return 0
 
         from starmapper.stitching_tool import run_stitching_tool

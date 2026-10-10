@@ -46,6 +46,13 @@ python main.py --stitch IMG1 IMG2 --screenshot-observatory OBSERV --stitch-sessi
 
 # Solve a saved session without opening the GUI (repeatable; use this for debugging)
 python main.py --stitch-session data/stitch-OBSERV.json --stitch-solve
+
+# Solve and save the direction to a marked label as an observation for --triangulate
+# (replaces the observation previously saved from the same session and label)
+python main.py --stitch-session data/stitch-OBSERV.json --stitch-solve --stitch-save-observation ANOMALY
+
+# Triangulate the anomaly from all stored observations
+python main.py --triangulate
 ```
 
 ## Development Environment (Distrobox)
