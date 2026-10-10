@@ -206,7 +206,7 @@ def create_stitching_tool(
                     star_pos = np.array(m.coords_3d, dtype=float)
                     px, py, vis = project_star_raw(
                         star_pos, obs_pos,
-                        cal.up_theta, cal.up_phi, cal.yaw,
+                        cal.up_theta, cal.up_phi, cal.yaw, cal.pitch,
                         np.radians(cal.fov_horizontal),
                         img_marking.image_width, img_marking.image_height,
                     )
@@ -391,7 +391,8 @@ def create_stitching_tool(
             print("Need at least 1 known-position star marked")
             return
 
-        state.result = solve_stitching(session)
+        # Use fixed FOV=90 and pitch=30 (game's known values) to reduce DOF
+        state.result = solve_stitching(session, fixed_fov=90.0, fixed_pitch=30.0)
 
         if state.result.solutions:
             print(f"\nFound {len(state.result.solutions)} solutions")

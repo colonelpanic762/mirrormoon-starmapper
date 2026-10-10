@@ -6,9 +6,9 @@ by matching known star positions in screenshots to their projected positions.
 Uses the "spherical moon" camera model where:
 - The player walks on a tiny spherical moon
 - "Up" = local gravity (radial from moon center)
-- Camera always looks at the horizon (no pitch)
+- Camera has a fixed upward pitch (like a wedge under it) - shared across images
 - Camera is always level (no roll)
-- Only yaw (horizontal rotation) is controllable
+- Only yaw (horizontal rotation) is controllable per-image
 """
 
 import numpy as np
@@ -29,13 +29,15 @@ class SphericalCalibration:
     This represents the camera orientation on a spherical moon surface:
     - up_theta, up_phi define the local "up" direction (gravity)
     - yaw is the horizontal rotation around that up vector
+    - pitch is the fixed upward tilt from horizon (like a wedge under camera)
     - fov is the horizontal field of view
     """
     fov_horizontal: float  # Horizontal field of view in degrees
     up_theta: float        # Polar angle of up vector (radians, 0=+Y, π=-Y)
     up_phi: float          # Azimuthal angle of up vector (radians)
     yaw: float             # Horizontal rotation around up (radians)
-    residual_error: float  # Mean pixel error after optimization
+    pitch: float = 0.0     # Upward tilt from horizon (radians, positive = looking up)
+    residual_error: float = 0.0  # Mean pixel error after optimization
 
     def up_vector(self) -> np.ndarray:
         """Get the local up direction as a unit vector."""
@@ -43,7 +45,7 @@ class SphericalCalibration:
 
     def forward_vector(self) -> np.ndarray:
         """Get the forward (look) direction as a unit vector."""
-        forward, _, _ = build_camera_frame(self.up_theta, self.up_phi, self.yaw)
+        forward, _, _ = build_camera_frame(self.up_theta, self.up_phi, self.yaw, self.pitch)
         return forward
 
     def __str__(self) -> str:
@@ -52,6 +54,7 @@ class SphericalCalibration:
             f"FOV: {self.fov_horizontal:.1f}°\n"
             f"Up: ({up[0]:.2f}, {up[1]:.2f}, {up[2]:.2f})\n"
             f"Yaw: {np.degrees(self.yaw):.1f}°\n"
+            f"Pitch: {np.degrees(self.pitch):.1f}°\n"
             f"Residual error: {self.residual_error:.1f} pixels"
         )
 
@@ -115,19 +118,21 @@ def build_camera_frame(
     up_theta: float,
     up_phi: float,
     yaw: float,
+    pitch: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Build camera coordinate frame from spherical parameters.
 
     The camera model:
     - "Up" is the local gravity direction (radial from moon center)
-    - "Forward" lies in the horizontal plane (perpendicular to up)
+    - "Forward" starts in the horizontal plane, then pitches up
     - "Right" completes the orthonormal frame
-    - Yaw rotates the forward direction around the up axis
+    - Yaw rotates around the up axis, pitch tilts up from horizon
 
     Args:
         up_theta: Polar angle of up vector (0 = +Y, π = -Y)
         up_phi: Azimuthal angle of up vector
         yaw: Horizontal rotation angle
+        pitch: Upward tilt from horizon (radians, positive = looking up)
 
     Returns:
         (forward, right, up) tuple of unit vectors
@@ -146,17 +151,25 @@ def build_camera_frame(
     forward_ref = world_ref - np.dot(world_ref, up) * up
     forward_ref = forward_ref / np.linalg.norm(forward_ref)
 
-    # Right at yaw=0 (cross product gives perpendicular in horizontal plane)
-    right_ref = np.cross(forward_ref, up)
+    # Right at yaw=0 - use cross(up, forward) for left-handed coordinate system
+    # (game appears to use left-handed coords based on horizontal flip behavior)
+    right_ref = np.cross(up, forward_ref)
     right_ref = right_ref / np.linalg.norm(right_ref)
 
     # Apply yaw rotation around up axis
     cos_y = np.cos(yaw)
     sin_y = np.sin(yaw)
-    forward = cos_y * forward_ref + sin_y * right_ref
+    forward_horiz = cos_y * forward_ref + sin_y * right_ref
     right = -sin_y * forward_ref + cos_y * right_ref
 
-    return forward, right, up
+    # Apply pitch rotation around right axis (tilt up from horizon)
+    # This rotates forward toward up and adjusts the camera's up accordingly
+    cos_p = np.cos(pitch)
+    sin_p = np.sin(pitch)
+    forward = cos_p * forward_horiz + sin_p * up
+    camera_up = -sin_p * forward_horiz + cos_p * up
+
+    return forward, right, camera_up
 
 
 def project_star(
@@ -180,6 +193,7 @@ def project_star(
     return project_star_raw(
         star_pos, observer_pos,
         calibration.up_theta, calibration.up_phi, calibration.yaw,
+        calibration.pitch,
         np.radians(calibration.fov_horizontal),
         image_width, image_height,
     )
@@ -191,9 +205,11 @@ def project_star_raw(
     up_theta: float,
     up_phi: float,
     yaw: float,
+    pitch: float,
     fov_h: float,
     image_width: int,
     image_height: int,
+    equirectangular: bool = False,
 ) -> tuple[float, float, bool]:
     """Project a star to image coordinates (raw parameters version).
 
@@ -202,8 +218,10 @@ def project_star_raw(
         observer_pos: 3D position of the observer
         up_theta, up_phi: Spherical coords of local "up" vector
         yaw: Horizontal rotation angle
+        pitch: Upward tilt from horizon (radians, positive = looking up)
         fov_h: Horizontal field of view in radians
         image_width, image_height: Image dimensions
+        equirectangular: If True, use equirectangular projection instead of rectilinear
 
     Returns:
         (pixel_x, pixel_y, visible) tuple
@@ -216,20 +234,43 @@ def project_star_raw(
     direction = direction / distance
 
     # Build camera frame
-    forward, right, up = build_camera_frame(up_theta, up_phi, yaw)
+    forward, right, up = build_camera_frame(up_theta, up_phi, yaw, pitch)
 
-    # Project onto view plane (rectilinear projection)
-    depth = np.dot(direction, forward)
-    if depth <= 0:
-        return 0, 0, False
+    # Components in camera frame
+    forward_comp = np.dot(direction, forward)
+    right_comp = np.dot(direction, right)
+    up_comp = np.dot(direction, up)
 
-    screen_x = np.dot(direction, right) / depth
-    screen_y = np.dot(direction, up) / depth
+    if equirectangular:
+        # Equirectangular projection: angles map linearly to pixels
+        # Good for wide FOV and skybox rendering
+        if forward_comp <= -0.99:  # Behind camera
+            return 0, 0, False
 
-    # Convert to pixel coordinates
-    scale = image_width / (2 * np.tan(fov_h / 2))
-    pixel_x = image_width / 2 + screen_x * scale
-    pixel_y = image_height / 2 - screen_y * scale  # Y flipped (0 at top)
+        # Horizontal angle from forward direction
+        horiz_angle = np.arctan2(right_comp, forward_comp)
+
+        # Vertical angle (elevation from horizontal plane through forward)
+        horiz_dist = np.sqrt(forward_comp**2 + right_comp**2)
+        vert_angle = np.arctan2(up_comp, horiz_dist)
+
+        # Map to pixels
+        fov_v = fov_h * image_height / image_width
+        pixel_x = image_width / 2 + (horiz_angle / (fov_h / 2)) * (image_width / 2)
+        pixel_y = image_height / 2 - (vert_angle / (fov_v / 2)) * (image_height / 2)
+
+    else:
+        # Rectilinear (pinhole) projection
+        if forward_comp <= 0:
+            return 0, 0, False
+
+        screen_x = right_comp / forward_comp
+        screen_y = up_comp / forward_comp
+
+        # Convert to pixel coordinates
+        scale = image_width / (2 * np.tan(fov_h / 2))
+        pixel_x = image_width / 2 + screen_x * scale
+        pixel_y = image_height / 2 - screen_y * scale  # Y flipped (0 at top)
 
     # Check if in frame
     visible = (0 <= pixel_x <= image_width and 0 <= pixel_y <= image_height)
@@ -259,6 +300,7 @@ def compute_direction(
     return compute_direction_raw(
         pixel_x, pixel_y,
         calibration.up_theta, calibration.up_phi, calibration.yaw,
+        calibration.pitch,
         np.radians(calibration.fov_horizontal),
         image_width, image_height,
     )
@@ -270,6 +312,7 @@ def compute_direction_raw(
     up_theta: float,
     up_phi: float,
     yaw: float,
+    pitch: float,
     fov_h: float,
     image_width: int,
     image_height: int,
@@ -280,6 +323,7 @@ def compute_direction_raw(
         pixel_x, pixel_y: Pixel position in image
         up_theta, up_phi: Spherical coords of local "up" vector
         yaw: Horizontal rotation angle
+        pitch: Upward tilt from horizon (radians, positive = looking up)
         fov_h: Horizontal field of view in radians
         image_width, image_height: Image dimensions
 
@@ -287,7 +331,7 @@ def compute_direction_raw(
         Unit direction vector in world coordinates
     """
     # Build camera frame
-    forward, right, up = build_camera_frame(up_theta, up_phi, yaw)
+    forward, right, up = build_camera_frame(up_theta, up_phi, yaw, pitch)
 
     # Convert pixel to screen coordinates (rectilinear)
     scale = image_width / (2 * np.tan(fov_h / 2))
@@ -522,15 +566,20 @@ def _spherical_calibration_error(
     image_width: int,
     image_height: int,
 ) -> float:
-    """Compute total squared error for spherical calibration."""
+    """Compute total squared error for spherical calibration.
+
+    Note: Single-image calibration assumes pitch=0. For proper pitch
+    estimation, use the multi-image stitching solver.
+    """
     fov_h, up_theta, up_phi, yaw = params
+    pitch = 0.0  # Single-image can't estimate pitch; assume level
 
     total_error = 0.0
     for marker in markers:
         star_pos = np.array(marker.coords_3d, dtype=float)
         px, py, visible = project_star_raw(
             star_pos, observer_pos,
-            up_theta, up_phi, yaw, fov_h,
+            up_theta, up_phi, yaw, pitch, fov_h,
             image_width, image_height,
         )
 
@@ -538,7 +587,7 @@ def _spherical_calibration_error(
             # Compute angular penalty to give gradient signal
             direction = star_pos - observer_pos
             direction = direction / np.linalg.norm(direction)
-            forward, _, _ = build_camera_frame(up_theta, up_phi, yaw)
+            forward, _, _ = build_camera_frame(up_theta, up_phi, yaw, pitch)
             dot = np.dot(direction, forward)
             total_error += 10000 * (1 - dot)
         else:
