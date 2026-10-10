@@ -36,45 +36,44 @@ python main.py --visualize
 
 # Save visualization to file
 python main.py --save data/star_map.png
+
+# Multi-image stitching: open the marking tool on a saved session
+# (markings are loaded from the file and saved after every click)
+python main.py --stitch-session data/stitch-OBSERV.json
+
+# Start a new stitching session from screenshots
+python main.py --stitch IMG1 IMG2 --screenshot-observatory OBSERV --stitch-session data/stitch-NAME.json
+
+# Solve a saved session without opening the GUI (repeatable; use this for debugging)
+python main.py --stitch-session data/stitch-OBSERV.json --stitch-solve
 ```
 
 ## Development Environment (Distrobox)
 
-This project uses a **Fedora 43 distrobox** container for development. The container provides:
-- Full dnf access for installing system packages (e.g., `python3-tkinter`)
-- Consistent Python environment with GUI support (matplotlib interactive)
-- VS Code with proper Python interpreter detection
+Claude Code runs from the Claude desktop app inside an **Ubuntu 24.04 distrobox** (Python 3.12), and the project's `.venv` is built there. Commands run directly in that container; there is no need for `distrobox enter`.
 
-### What runs where
-
-| Task | Environment | Command |
-|------|-------------|---------|
-| Run Python/tests | **Distrobox** | `distrobox enter dev` then run commands |
-| Edit code | **Distrobox VS Code** | Launch "VS Code (on dev)" from app menu |
-| Git operations | **Host or Distrobox** | Both work (home directory is shared) |
-| Claude Code | **Host** | Uses `distrobox enter dev -- <cmd>` to run Python |
-
-### Quick reference
-```bash
-# Enter the dev container
-distrobox enter dev
-
-# Run command inside container without entering
-distrobox enter dev -- python3 --version
-
-# Run starmapper from container
-distrobox enter dev -- bash -c "cd ~/Documents/starmapper && source .venv/bin/activate && python main.py"
-```
+- Run Python with `.venv/bin/python` (or activate the venv first).
+- System packages are installed with `sudo apt-get install` (passwordless inside the container).
+- The interactive matplotlib tools need `python3-tk` from apt. `tkinter` cannot be installed with pip; without it matplotlib falls back to the non-interactive `agg` backend and no window opens.
+- A venv is tied to the interpreter and path it was created with. If the repo moves or a different container is used, recreate it: `rm -rf .venv && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
 
 ## Project Structure
 
 ```
 starmapper/
-├── coords.py        # Coordinate parsing, 9-digit ↔ (x,y,z) transforms, Star dataclass
-├── visualization.py # matplotlib-based 3D star map rendering
-├── projection.py    # (planned) Skybox projection math (observer → sky coordinates)
-└── triangulation.py # (planned) Observation cones, intersection calculations
+├── coords.py           # Coordinate parsing, 9-digit ↔ (x,y,z) transforms, Star dataclass
+├── visualization.py    # matplotlib-based 3D star map rendering
+├── projection.py       # Skybox projection math (observer → sky coordinates)
+├── observatory_view.py # Simulated observatory view
+├── triangulation.py    # Observation cones, intersection calculations
+├── navigation.py       # Ship navigation guidance and orientation calibration
+├── calibration.py      # Camera model, single-screenshot calibration, projection helpers
+├── screenshot_tool.py  # Interactive single-screenshot calibration tool
+├── stitching.py        # Multi-image stitching solver, session save/load
+└── stitching_tool.py   # Interactive multi-image marking tool
 ```
+
+Stitching sessions are JSON files in `data/` (e.g. `data/stitch-OBSERV.json`) holding image paths and marked pixel positions. Known-star coordinates are looked up from `stars.json` on load.
 
 ## Coordinate System
 
@@ -291,7 +290,8 @@ The player walks on the surface of a **tiny spherical moon** with these constrai
 
 - **Walking angular velocity**: 10°/sec (360° / 36.03s circumnavigation)
 - **Moon physical size**: Irrelevant—only angular relationships matter
-- **FOV**: ~90° (constant within game session)
+- **FOV**: ~84° horizontal on 1280×800 screenshots (fitted: 83.9° on the OBSERV set; each image independently prefers 83–84.5°). Assuming 90° leaves every star 2–3° off.
+- **Handedness**: the game's frame is left-handed (`right = up × forward`). The mirrored alternative fits 8–23° RMS worse, so there is no flip ambiguity to resolve.
 
 #### New Parameterization
 
@@ -313,7 +313,7 @@ right = cross(forward, up)                      # Recompute right
 **Implicit constraints (vs. old model):**
 - Elevation = 0 (always looking at local horizon)
 - Roll = 0 (camera always level relative to local gravity)
-- Flip settings: Likely unnecessary—the spherical model should handle orientation differences naturally
+- Flip settings: Unnecessary—confirmed by the fit (see Handedness above)
 
 **Shared parameters:**
 - FOV (same game session)
@@ -345,3 +345,20 @@ The game renders stars onto a **spherical skybox** that the player views from in
 - Rectilinear projection works well for stars near center of frame
 - For highest accuracy, mark reference stars away from screen edges
 - Edge accuracy matters less for triangulation since we primarily use centered stars
+
+### Stitching Solver (v3, current)
+
+The solver in `stitching.py` no longer optimizes up/yaw/pitch iteratively. The earlier L-BFGS-B version got stuck in mirrored and bound-pinned local minima (yaw is periodic but was given hard ±180° bounds) and never converged.
+
+**How it works now:**
+1. For a candidate FOV, convert each marked pixel to a unit ray in camera coordinates.
+2. Per image, find the rotation that best maps the known stars' world directions onto those rays. This is Wahba's problem and has an exact SVD solution—no starting guess, no local minima.
+3. Search the single shared FOV (coarse scan, then 1D refinement) to minimize the summed squared angular residuals.
+4. Images with fewer than 2 known stars are fitted afterwards, using correspondences to already-fitted images as extra reference directions.
+
+**Consequences for the models above:**
+- Local "up" (2 DOF) plus yaw (1 DOF) already spans every 3D rotation, so each image is simply a free rotation. A shared camera pitch therefore **cannot be measured** from the star fit; `fixed_pitch` (30° in the tool) only changes how the fitted orientation is reported as an up vector and yaw.
+- With handedness known, 2 known stars in an image give a unique orientation (the "4 candidate rays" table under The Calibration Problem describes the old flip-ambiguous model).
+- Errors are reported as RMS angles in degrees. Cross-image correspondences are weighted lightly in the FOV search and not used for orientation when an image has 2+ known stars, so their agreement is a near-independent check.
+
+**Result on the OBSERV screenshots:** 0.34° RMS, reference stars within 2–8 px, correspondences agreeing to 0.3–0.8°. Anomaly direction from OBSERV: (-0.5983, 0.2791, 0.7511).
