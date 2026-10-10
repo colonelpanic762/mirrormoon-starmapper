@@ -355,7 +355,7 @@
       "notes": "Hidden observatory - required manipulator with all 3 slots. Near AZURIA. Third confirmed observatory with anomaly visibility. Anomaly slightly closer to UMA than VOID6, slightly right of line connecting them."
     },
     {
-      "coordinates": null,
+      "coordinates": "391732477",
       "original_name": null,
       "player_name": "UMA",
       "discovered_by_user": false,
@@ -365,7 +365,7 @@
       "notes": "Visible from OBSERV, near anomaly"
     },
     {
-      "coordinates": null,
+      "coordinates": "040456762",
       "original_name": null,
       "player_name": "VOID6",
       "discovered_by_user": false,
@@ -375,7 +375,7 @@
       "notes": "Visible from OBSERV, near anomaly"
     },
     {
-      "coordinates": null,
+      "coordinates": "339781134",
       "original_name": null,
       "player_name": "DERVOT",
       "discovered_by_user": false,
@@ -385,7 +385,7 @@
       "notes": "Visible from OBSERV"
     },
     {
-      "coordinates": null,
+      "coordinates": "382578189",
       "original_name": null,
       "player_name": "KLORIA",
       "discovered_by_user": false,
@@ -484,45 +484,45 @@
   ],
   "nav_calibration": {
     "ship_position": [
-      758,
-      466,
-      793
+      437,
+      391,
+      781
     ],
     "left_samples": [
       [
-        671,
-        461,
-        913
+        282,
+        390,
+        788
       ],
       [
-        627,
-        461,
-        143
+        212,
+        397,
+        287
       ],
       [
-        559,
-        473,
-        507
+        57,
+        394,
+        244
       ]
     ],
     "right_samples": [],
-    "up_samples": [
+    "up_samples": [],
+    "down_samples": [
       [
-        758,
-        500,
-        920
+        442,
+        264,
+        976
       ],
       [
-        760,
-        602,
-        684
+        435,
+        212,
+        189
       ],
       [
-        755,
-        675,
-        36
+        434,
+        119,
+        971
       ]
-    ],
-    "down_samples": []
+    ]
   }
 }
