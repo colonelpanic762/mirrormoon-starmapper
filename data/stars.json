@@ -442,6 +442,16 @@
       "has_observatory": null,
       "observatory_active": null,
       "anomaly_visible": null
+    },
+    {
+      "coordinates": "282669591",
+      "original_name": null,
+      "player_name": "ROBERT",
+      "discovered_by_user": false,
+      "has_observatory": null,
+      "observatory_active": null,
+      "anomaly_visible": null,
+      "notes": "THE ANOMALY. Found 2026-10-10 by triangulating stitched observations from OBSERV, OBS007 and OBS1; estimate (279, 669, 594) was 4.1 PC off."
     }
   ],
   "observations": [
