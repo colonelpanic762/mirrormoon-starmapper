@@ -302,7 +302,10 @@
       "has_observatory": null,
       "observatory_active": null,
       "anomaly_visible": null,
-      "notes": "Reference star VERY close to anomaly (from OBS1 view, 11 o'clock)"
+      "notes": "Reference star VERY close to anomaly (from OBS1 view, 11 o'clock)",
+      "seen_from": [
+        "OBS1"
+      ]
     },
     {
       "coordinates": "043357429",
@@ -505,6 +508,38 @@
         "label": "ANOMALY",
         "fov_horizontal": 83.43097868543332
       }
+    },
+    {
+      "id": "929673fd-6346-4088-bcbc-fc5cfce01843",
+      "observer_coordinates": "590949307",
+      "direction_vector": [
+        -0.6586154106757055,
+        -0.5352841576176542,
+        0.5288635092573791
+      ],
+      "cone_half_angle": 0.07826812297170484,
+      "timestamp": "2026-10-11T00:57:39.389141Z",
+      "view_state": {
+        "source": "observatory_view",
+        "tilt_deg": 13.0,
+        "camera": {
+          "right": [
+            -0.6101895029666415,
+            0.7892879100970813,
+            0.06850814144256588
+          ],
+          "up": [
+            -0.412581404545981,
+            -0.24275573566127912,
+            -0.8779784948542022
+          ],
+          "forward": [
+            -0.676347067038974,
+            -0.5639984466096974,
+            0.4737725162244733
+          ]
+        }
+      }
     }
   ],
   "nav_calibration": {
@@ -549,5 +584,11 @@
         971
       ]
     ]
+  },
+  "observatory_camera": {
+    "tilt_deg": 13.0,
+    "turn_rate_deg_s": 80.0,
+    "aspect": 1.6,
+    "horizon_below_center_deg": 20.0
   }
 }
