@@ -19,6 +19,11 @@ def data_path(tmp_path):
     """A copy of the real data without anything the by-eye view has saved."""
     data = json.loads((DATA / "stars.json").read_text())
     data.pop("observatory_camera", None)
+    for star in data["stars"]:
+        star.pop("seen_from", None)
+        # The tests use AUT56 as their not-yet-located star
+        if star.get("player_name") == "AUT56":
+            star["coordinates"] = None
     data["observations"] = [
         o for o in data["observations"]
         if (o.get("view_state") or {}).get("source") != "observatory_view"

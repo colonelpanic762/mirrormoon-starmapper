@@ -247,6 +247,274 @@ def record_visible_stars(
     return located, unlocated
 
 
+def _find_entry(data: dict, name: str) -> dict | None:
+    """Find a star's raw data entry by player or original name (case-insensitive)."""
+    wanted = name.lower()
+    for entry in data["stars"]:
+        if wanted in ((entry.get("player_name") or "").lower(),
+                      (entry.get("original_name") or "").lower()):
+            return entry
+    return None
+
+
+def _entry_name(entry: dict) -> str:
+    return entry.get("player_name") or entry.get("original_name")
+
+
+def unlocated_stars_seen_from(data_path: Path, observer: Star) -> list[str]:
+    """Names of stars without coordinates that were seen from an observatory."""
+    with open(data_path) as f:
+        data = json.load(f)
+    return [
+        _entry_name(entry) for entry in data["stars"]
+        if not entry.get("coordinates")
+        and observer.display_name in entry.get("seen_from", [])
+    ]
+
+
+def save_sighting(
+    data_path: Path,
+    star_name: str,
+    observer: Star,
+    direction: np.ndarray,
+    cone_half_angle: float,
+) -> None:
+    """Save a line of sight to an unlocated star, replacing the earlier
+    sighting of it from the same observatory."""
+    from datetime import datetime, timezone
+
+    with open(data_path) as f:
+        data = json.load(f)
+    entry = _find_entry(data, star_name)
+    if entry is None:
+        raise ValueError(f"Star '{star_name}' not found")
+
+    sightings = [
+        s for s in entry.get("sightings", [])
+        if s["observer"] != observer.display_name
+    ]
+    sightings.append({
+        "observer": observer.display_name,
+        "direction": [float(c) for c in direction],
+        "cone_half_angle": float(cone_half_angle),
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    })
+    entry["sightings"] = sightings
+    _write_data(data_path, data)
+
+
+def load_sightings_from(data_path: Path, observer: Star) -> dict[str, tuple[np.ndarray, float]]:
+    """Sightings of still-unlocated stars from an observatory:
+    name -> (direction, cone_half_angle)."""
+    with open(data_path) as f:
+        data = json.load(f)
+    result = {}
+    for entry in data["stars"]:
+        if entry.get("coordinates"):
+            continue
+        for s in entry.get("sightings", []):
+            if s["observer"] == observer.display_name:
+                result[_entry_name(entry)] = (np.array(s["direction"]), s["cone_half_angle"])
+    return result
+
+
+def _entry_sightings(entry: dict, stars: list[Star]):
+    """Finder Sighting objects for a raw star entry (skips unknown observatories)."""
+    from starmapper.finder import Sighting
+
+    result = []
+    for s in entry.get("sightings", []):
+        observer = find_star_by_name(stars, s["observer"])
+        if observer is None or not observer.has_position:
+            continue
+        result.append(Sighting(
+            observer_name=observer.display_name,
+            origin=np.array(observer.position, dtype=float),
+            direction=np.array(s["direction"], dtype=float),
+            cone_half_angle=s["cone_half_angle"],
+        ))
+    return result
+
+
+def format_find_overview(data_path: Path) -> str:
+    """List every unlocated star and where it has been seen and marked."""
+    with open(data_path) as f:
+        data = json.load(f)
+
+    lines = ["== Need to find =="]
+    for entry in data["stars"]:
+        if entry.get("coordinates"):
+            continue
+        seen_from = entry.get("seen_from", [])
+        marked_from = [s["observer"] for s in entry.get("sightings", [])]
+        if seen_from:
+            places = ", ".join(
+                f"{name} ({'marked' if name in marked_from else 'not marked'})"
+                for name in seen_from
+            )
+            lines.append(f"  {_entry_name(entry)}: seen from {places}")
+        else:
+            lines.append(f"  {_entry_name(entry)}: no sightings recorded")
+    if len(lines) == 1:
+        lines.append("  Nothing outstanding")
+    return "\n".join(lines)
+
+
+def format_find_report(data_path: Path, name: str) -> str:
+    """Describe where to look for an unlocated star from each observatory
+    it was marked from."""
+    from starmapper.finder import (
+        distance_range, stars_in_circle, estimate_position, map_line, map_offset,
+        CLUSTER_BOUNDS,
+    )
+    from starmapper import decode_original_name
+
+    with open(data_path) as f:
+        data = json.load(f)
+    entry = _find_entry(data, name)
+    if entry is None:
+        return f"Star '{name}' not found"
+
+    display = _entry_name(entry)
+    lines = [f"== Finding {display} =="]
+    if entry.get("coordinates"):
+        x, y, z = parse_coordinates(entry["coordinates"])
+        lines.append(f"  Already located at ({x}, {y}, {z})")
+        return "\n".join(lines)
+
+    bounds = CLUSTER_BOUNDS
+    if entry.get("original_name"):
+        decoded = decode_original_name(entry["original_name"])
+        if decoded:
+            bounds = decoded
+            lines.append(
+                "  Name puts it at X {0}-{1}, Y {2}-{3}, Z {4}-{5}".format(
+                    *(v for axis in decoded for v in axis))
+            )
+
+    stars = load_stars(data_path)
+    known = {
+        s.display_name: np.array(s.position, dtype=float)
+        for s in stars if s.has_position
+    }
+    sightings = _entry_sightings(entry, stars)
+    marked_from = {s.observer_name for s in sightings}
+    calibration = load_calibration(data_path)
+    axes = calibration.get_screen_axes() if calibration else None
+
+    for observatory in entry.get("seen_from", []):
+        if observatory not in marked_from:
+            lines.append(f"\n  Seen from {observatory} but not marked yet.")
+            lines.append(f"    Open the view (--observatory {observatory}) and mark it.")
+    if not sightings and not entry.get("seen_from"):
+        lines.append("  No sightings recorded.")
+
+    for sighting in sightings:
+        others = {n: p for n, p in known.items() if n != sighting.observer_name}
+        lines.append(
+            f"\n  From {sighting.observer_name} "
+            f"(marked ±{np.degrees(sighting.cone_half_angle):.1f}°)"
+        )
+        reach = distance_range(sighting, bounds)
+        if reach is None:
+            lines.append("    Distance:    the mark does not pass through the name's region; "
+                         "re-check the mark or the name")
+        else:
+            lines.append(f"    Distance:    {reach[0]:.0f}-{reach[1]:.0f} PC "
+                         f"from {sighting.observer_name}")
+
+        inside = stars_in_circle(sighting, others)
+        if inside:
+            lines.append("    Rule out:    " + ", ".join(
+                f"{star.name} ({star.distance:.0f} PC)" for star in inside))
+        else:
+            lines.append("    Rule out:    no known stars inside your circle")
+
+        if axes is None:
+            lines.append("    Ship's map:  not calibrated (see --calibrate-nav), "
+                         "so no search direction")
+            continue
+
+        line = map_line(sighting, axes.right, axes.up)
+        dot = (f"{sighting.observer_name}'s dot (your diamond, if you are parked there)")
+        lines.append(f"    On the ship's map, if it has not been rotated since calibrating:")
+        if line.across_per_pc < 0.15:
+            lines.append(f"      The line of sight points almost straight into the map, so")
+            lines.append(f"      candidates bunch up around {dot}.")
+        else:
+            lines.append(f"      Search outward from {dot}")
+            lines.append(f"      along {line.clock} on a clock face, "
+                         f"within about {line.spread_deg:.0f}° either side.")
+            if reach is not None:
+                lines.append(
+                    f"      That stretch runs from {reach[0] * line.across_per_pc:.0f} to "
+                    f"{reach[1] * line.across_per_pc:.0f} PC across the map."
+                )
+        # Known stars near the line give a sense of scale on the unlabelled map
+        scale = []
+        for name, position in others.items():
+            offset = map_offset(position - sighting.origin, axes.right, axes.up)
+            turn = abs((offset.clock_hours - line.clock_hours + 6) % 12 - 6)
+            if offset.across > 30:
+                scale.append((turn, name, offset))
+        for _, name, offset in sorted(scale, key=lambda item: item[0])[:3]:
+            lines.append(f"      For scale: {name} is at {offset.clock}, "
+                         f"{offset.across:.0f} PC across.")
+
+    position = estimate_position(sightings)
+    if position is not None:
+        lines.append(
+            f"\n  Estimated position from {len(marked_from)} observatories: "
+            f"({position[0]:.0f}, {position[1]:.0f}, {position[2]:.0f})"
+        )
+
+    return "\n".join(lines)
+
+
+def mark_star_located(data_path: Path, name: str, coordinates: str) -> str:
+    """Record a found star's coordinates and score any sightings of it.
+
+    Creates the star if it is not in the data file yet.
+
+    Raises:
+        ValueError: If coordinates is not a 9-digit string
+    """
+    x, y, z = parse_coordinates(coordinates)
+
+    with open(data_path) as f:
+        data = json.load(f)
+    entry = _find_entry(data, name)
+    if entry is None:
+        is_original = len(name) == 6 and name[3] == "/"
+        entry = {
+            "coordinates": None,
+            "original_name": name.upper() if is_original else None,
+            "player_name": None if is_original else name.upper(),
+            "discovered_by_user": False,
+            "has_observatory": None,
+            "observatory_active": None,
+            "anomaly_visible": None,
+        }
+        data["stars"].append(entry)
+    entry["coordinates"] = coordinates
+    _write_data(data_path, data)
+
+    lines = [f"✓ {_entry_name(entry)} located at ({x}, {y}, {z})"]
+    position = np.array([x, y, z], dtype=float)
+    for sighting in _entry_sightings(entry, load_stars(data_path)):
+        offset = position - sighting.origin
+        cos_angle = np.clip(
+            np.dot(offset / np.linalg.norm(offset), sighting.direction), -1, 1)
+        error = np.degrees(np.arccos(cos_angle))
+        circle = np.degrees(sighting.cone_half_angle)
+        verdict = "inside" if error <= circle else "outside"
+        lines.append(
+            f"  Your mark from {sighting.observer_name} was {error:.1f}° off "
+            f"({verdict} your ±{circle:.1f}° circle)"
+        )
+    return "\n".join(lines)
+
+
 def clear_all_observations(data_path: Path) -> int:
     """Remove all observations. Returns count deleted."""
     with open(data_path) as f:
@@ -365,6 +633,20 @@ def main():
         type=str,
         metavar="STAR",
         help="Hide this star (the known anomaly) and report how far each mark was from it",
+    )
+    parser.add_argument(
+        "--find",
+        nargs='?',
+        const='',
+        metavar="STAR",
+        help="Where to look for a star that has been seen but not located. "
+             "Without a name, lists all such stars",
+    )
+    parser.add_argument(
+        "--located",
+        nargs=2,
+        metavar=("STAR", "COORDS"),
+        help="Record the 9-digit coordinates of a star you found",
     )
     # Triangulation arguments
     parser.add_argument(
@@ -945,6 +1227,21 @@ def main():
             plt.show()
 
     # Show observatory view if requested
+    if args.located:
+        try:
+            print("\n" + mark_star_located(args.data, args.located[0], args.located[1]))
+        except ValueError as error:
+            print(f"\nError: {error}")
+            return 1
+        return 0
+
+    if args.find is not None:
+        if args.find:
+            print("\n" + format_find_report(args.data, args.find))
+        else:
+            print("\n" + format_find_overview(args.data))
+        return 0
+
     # Camera settings are saved whether or not the view is opened
     if args.tilt is not None or args.turn_time is not None or args.aspect is not None:
         settings = load_observatory_settings(args.data)
@@ -984,7 +1281,8 @@ def main():
 
         settings = load_observatory_settings(args.data)
 
-        located, unlocated = record_visible_stars(args.data, observer, args.visible or [])
+        located, _ = record_visible_stars(args.data, observer, args.visible or [])
+        unlocated = unlocated_stars_seen_from(args.data, observer)
         stars = load_stars(args.data)
 
         print(f"\n== Observatory View from {observer.display_name} ==")
@@ -1008,6 +1306,11 @@ def main():
             if error is not None:
                 print(f"  {check_star.display_name} was {np.degrees(error):.1f}° from your mark")
 
+        def on_sighting(name, direction, radius):
+            save_sighting(args.data, name, observer, direction, radius)
+            print(f"\n✓ Sighting of {name} saved (±{np.degrees(radius):.1f}°). "
+                  f"See where to look with: --find {name}")
+
         from starmapper import ObservatoryView
         view = ObservatoryView(
             observer=observer,
@@ -1018,6 +1321,8 @@ def main():
             check_star=check_star,
             on_observation=on_observation,
             on_settings_changed=lambda s: save_observatory_settings(args.data, s),
+            sightings=load_sightings_from(args.data, observer),
+            on_sighting=on_sighting,
         )
 
         if args.save:

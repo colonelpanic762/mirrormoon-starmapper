@@ -39,10 +39,13 @@ HELP_TEXT = (
     "Q/E   twist sky\n"
     "Shift slow\n"
     "[ ]   camera tilt\n"
-    "Click anomaly, then\n"
-    "click its error radius\n"
+    "0-9   what to mark\n"
+    "Click it, then click\n"
+    "its error radius\n"
     "Esc   clear mark"
 )
+
+ANOMALY = "ANOMALY"
 
 
 @dataclass
@@ -73,6 +76,8 @@ class ObservatoryView:
         check_star: Star | None = None,
         on_observation: Callable[[Observation], None] | None = None,
         on_settings_changed: Callable[[ObservatorySettings], None] | None = None,
+        sightings: dict[str, tuple[np.ndarray, float]] | None = None,
+        on_sighting: Callable[[str, np.ndarray, float], None] | None = None,
     ):
         """
         Args:
@@ -85,8 +90,12 @@ class ObservatoryView:
             check_star: A star at the anomaly's true position. It is hidden
                 from the view, and each marked observation reports how far
                 off it was.
-            on_observation: Called with each completed Observation
+            on_observation: Called with each completed anomaly Observation
             on_settings_changed: Called when the tilt is changed in the view
+            sightings: Earlier marks of unlocated stars from this observatory,
+                name -> (direction, error radius in radians); drawn as circles
+            on_sighting: Called with (name, direction, radius) when an
+                unlocated star is marked
         """
         self.observer = observer
         self.settings = settings or ObservatorySettings()
@@ -94,6 +103,9 @@ class ObservatoryView:
         self.check_star = check_star
         self.on_observation = on_observation
         self.on_settings_changed = on_settings_changed
+        self.sightings = dict(sightings or {})
+        self.on_sighting = on_sighting
+        self.target = ANOMALY   # What the next mark is of
 
         visible = set(visible_names or [])
         origin = np.array(observer.position, dtype=float)
@@ -126,7 +138,7 @@ class ObservatoryView:
         # Marking state
         self.mark_direction: np.ndarray | None = None
         self.mark_radius: float | None = None   # Set once the mark is complete
-        self.status = "Line up the view, then click the anomaly"
+        self.status = self._prompt()
 
         # Held movement keys: key -> slow flag
         self._held: dict[str, bool] = {}
@@ -208,6 +220,7 @@ class ObservatoryView:
 
         self.ax.plot(0, 0, '+', color='#444466', markersize=12, zorder=1)
         self._ground = None
+        self._sighting_artists: dict[str, tuple] = {}
         self._mark_point, = self.ax.plot([], [], 'x', color='#ff5566',
                                          markersize=11, markeredgewidth=2, zorder=5)
         self._mark_circle, = self.ax.plot([], [], '-', color='#ff5566',
@@ -323,6 +336,7 @@ class ObservatoryView:
         else:
             self._mark_circle.set_data([], [])
 
+        self._draw_sightings()
         self._status_text.set_text(self.status)
 
         up = self.camera.local_up
@@ -335,8 +349,14 @@ class ObservatoryView:
             f"Standing at (up):",
             f" ({up[0]:+.2f},{up[1]:+.2f},{up[2]:+.2f})",
         ]
+        lines += ["", "Marking:", f"{'>' if self.target == ANOMALY else ' '}0 anomaly"]
         if self.unlocated_names:
-            lines += ["", "Need to find:"] + [f" {name}" for name in self.unlocated_names]
+            lines += ["", "Need to find:"]
+            for number, name in enumerate(self.unlocated_names, start=1):
+                pointer = '>' if self.target == name else ' '
+                key = str(number) if number <= 9 else ' '
+                marked = " ✓" if name in self.sightings else ""
+                lines.append(f"{pointer}{key} {name}{marked}")
         self._panel_text.set_text("\n".join(lines))
 
         self.fig.canvas.draw_idle()
@@ -356,6 +376,8 @@ class ObservatoryView:
             self._released_at.pop(base, None)
         elif base in ('[', ']'):
             self.set_tilt(self.settings.tilt_deg + (1 if base == ']' else -1))
+        elif base.isdigit():
+            self.select_target(int(base))
         elif base == 'escape':
             self.clear_mark()
 
@@ -407,17 +429,52 @@ class ObservatoryView:
     # Marking the anomaly
     # ------------------------------------------------------------------
 
+    def _prompt(self) -> str:
+        what = "the anomaly" if self.target == ANOMALY else self.target
+        return f"Line up the view, then click {what}"
+
+    def select_target(self, number: int) -> None:
+        """Choose what the next mark is of: 0 = anomaly, 1-9 = need-to-find star."""
+        if number == 0:
+            self.target = ANOMALY
+        elif number <= len(self.unlocated_names):
+            self.target = self.unlocated_names[number - 1]
+        else:
+            return
+        self.clear_mark()
+
     def clear_mark(self) -> None:
         self.mark_direction = None
         self.mark_radius = None
-        self.status = "Line up the view, then click the anomaly"
+        self.status = self._prompt()
         self.redraw()
+
+    def _draw_sightings(self) -> None:
+        """Draw saved sightings of unlocated stars as labelled circles."""
+        for name, (direction, radius) in self.sightings.items():
+            if name not in self._sighting_artists:
+                line, = self.ax.plot([], [], '-', color='#55ccdd', linewidth=1.0, zorder=3.5)
+                text = self.ax.text(0, 0, name, color='#55ccdd', fontsize=8,
+                                    clip_on=True, zorder=3.5)
+                self._sighting_artists[name] = (line, text)
+            line, text = self._sighting_artists[name]
+            line.set_data(*self._cone_outline(direction, radius))
+            point = self._to_plot(direction)
+            in_frame = (
+                point is not None
+                and abs(point[0]) <= self.settings.aspect and abs(point[1]) <= 1
+            )
+            text.set_visible(in_frame)
+            if in_frame:
+                # Below the center, clear of star labels (above-right of their stars)
+                text.set_position((point[0] + 0.025, point[1] - 0.06))
 
     def click(self, plot_x: float, plot_y: float) -> Observation | None:
         """Handle a click at plot coordinates.
 
-        The first click marks the anomaly, the second sets the uncertainty
-        radius and completes the observation, which is returned.
+        The first click marks the current target, the second sets the
+        uncertainty radius. For the anomaly this completes an observation,
+        which is returned; for a need-to-find star it saves a sighting.
         """
         direction = self._to_direction(plot_x, plot_y)
 
@@ -432,6 +489,20 @@ class ObservatoryView:
         if radius < 1e-4:
             return None  # Double-click on the same spot; wait for a real radius
         self.mark_radius = radius
+
+        if self.target != ANOMALY:
+            self.sightings[self.target] = (self.mark_direction.copy(), radius)
+            self.status = (
+                f"{self.target} sighting saved (±{np.degrees(radius):.1f}°). "
+                f"Click to re-mark."
+            )
+            if self.on_sighting:
+                self.on_sighting(self.target, self.mark_direction.copy(), radius)
+            # The saved circle replaces the working mark
+            self.mark_direction = None
+            self.mark_radius = None
+            self.redraw()
+            return None
 
         observation = Observation(
             observer_coordinates=self.observer.coordinates,

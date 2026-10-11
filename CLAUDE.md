@@ -45,6 +45,13 @@ python main.py --observatory OBS1 --visible GIOVAN AUY/14 DAV21 AUT56
 # Same, but hide the known anomaly star and report how far each mark was from it
 python main.py --observatory OBS1 --visible GIOVAN AUY/14 DAV21 --check-against ROBERT
 
+# Need-to-find stars: list them all, or get a finder report for one
+python main.py --find
+python main.py --find AUT56
+
+# Record the coordinates of a star you found (also scores your sightings of it)
+python main.py --located AUT56 123456789
+
 # One-time camera settings (saved in stars.json under "observatory_camera")
 python main.py --tilt 13 --turn-time 4.5 --aspect 16:10
 
@@ -86,6 +93,7 @@ starmapper/
 ├── visualization.py    # matplotlib-based 3D star map rendering
 ├── camera.py           # MoonCamera: first-person camera logic (turn/walk/twist, projection)
 ├── observatory_view.py # Interactive first-person observatory view (uses MoonCamera)
+├── finder.py           # Search helpers for seen-but-unlocated stars (landmarks, distance range)
 ├── triangulation.py    # Observation cones, intersection calculations
 ├── navigation.py       # Ship navigation guidance and orientation calibration
 ├── calibration.py      # Camera model, single-screenshot calibration, projection helpers
@@ -186,6 +194,12 @@ Located next to star display, shows (unlabeled):
 3. **Forward-only toggle** — unlocked after finding first observatory
    - OFF: All stars visible; rotating causes stars to move in different directions (front vs. behind)
    - ON: Only stars in front visible; all visible stars move together when rotating; stars appear/disappear at edges
+
+**Projection (confirmed by the user and by calibration data):** the map is a flat rectangle showing an orthographic projection onto the ship's own plane. The diamond is the ship's actual position in the cluster. Panning moves the cursor within the map's plane; rotating turns the ship in space and the map plane with it. It is a completely different system from the observatory's first-person sky, and nothing about the moon's orientation carries over. Stars behind the ship are drawn too unless the "slice toggle" (the forward-only toggle below) is on; with it on, the selected star is also circled in the sky outside the map display.
+
+**Cockpit readouts:** ship position; the targeted star's name, position and distance; travel time at the current EP; while travelling, the destination's position and time remaining. Visited stars are drawn lighter than unvisited ones, and the previous flight path shows with the map backlight off and cabin lights on.
+
+**Orientation calibration (`NavCalibration` in `navigation.py`):** every star level with the diamond on the map lies in one plane through the ship regardless of its depth, and the map's up axis is that plane's normal; stars directly above or below the diamond give the right axis the same way. Two stars per line are enough, depth drops out exactly, and `--show-calibration` lists how far each sample is off its line so a misread coordinate stands out. The original version averaged the ship-to-star directions instead, which depth corrupted (15–43° scatter on the user's samples); it was hard to get right for that reason, not because of bad readings. The user's December samples fit to within 6 PC and give right = +X, up = +Y, but only because they happened to square the map up by fiddling and then stopped touching the rotation control. It is not a default.
 
 **Orientation:**
 - No angle readouts available — must estimate or use coordinate math
@@ -372,6 +386,16 @@ The game renders stars onto a **spherical skybox** that the player views from in
 The user considers solving from screenshots "a bit cheaty"; the intended workflow is a 3D version of mapping the puzzle on graph paper. `--observatory` opens a view drawn the way the game draws it, which the user lines up by eye against the running game, then marks the anomaly with two clicks (best guess, then the radius they are confident it lies within). The screenshot tools remain as a way to validate the math.
 
 **Controls:** A/D turn, W/S walk (10°/s), Shift = slow, `[` `]` change the tilt, Esc clears a mark. Q/E twist the sky around the view center; this is the only non-game control and is physically valid—it is the same as standing elsewhere on the moon while looking at the same point (in-game it takes a wiggle of walking and turning).
+
+**Need-to-find stars.** Stars named in `--visible` that have no coordinates get the observatory added to their `seen_from` list in `stars.json`, and the list persists between runs. In the view, keys 1–9 choose one of them as the thing to mark (0 = anomaly); the same two clicks save a `sightings` entry on that star (one per observatory), redrawn as a cyan circle on later runs.
+
+How the user actually searches, which shaped the design:
+- The ship's cockpit shows the **name, position and distance of any targeted star** without flying to it, so confirming a find is just reading the screen. The only real problem is where to point the crosshair.
+- They search from the observatory's own star first, panning the ship's map. The map is a **flat projection** (see Ship Star Map Display), so a line of sight appears on it as a **straight line running out from the observatory's dot** (the diamond when parked there), with farther stars farther out along it. `--find` gives that line as a clock direction, a wedge width from the error circle, how far across the map the possible distances reach, and a few known stars near the line for scale. This needs the map's orientation from `--calibrate-nav`, and holds only while the ship has not been rotated since.
+- An earlier version described the spot by angles to nearby known stars. That was useless in practice: the map has no angle scale and is not a view outward from the ship. Do not bring it back.
+- `--find` also gives a distance range from the observatory; for stars with original names the 100 PC name cube narrows it.
+- Seeing the same unknown star from two observatories is chance; when it happens `--find` also prints a triangulated position. Wandering to stumble on missing stars is a fallback, for which the plain list of names is enough.
+- Not built: the one-known-star case (the unknown lies on a ring around it).
 
 **Design notes:**
 - `camera.py` holds all movement and projection logic with no drawing code, so the matplotlib view could later be swapped for a real-time 3D one (the user's lost original prototype used Ursina).
