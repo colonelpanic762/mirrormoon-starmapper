@@ -37,6 +37,20 @@ python main.py --visualize
 # Save visualization to file
 python main.py --save data/star_map.png
 
+# First-person observatory view (by-eye workflow, no screenshots).
+# --visible lists the stars you can see in-game: known ones are highlighted and
+# framed, unknown ones are recorded in stars.json as "seen_from" this observatory.
+python main.py --observatory OBS1 --visible GIOVAN AUY/14 DAV21 AUT56
+
+# Same, but hide the known anomaly star and report how far each mark was from it
+python main.py --observatory OBS1 --visible GIOVAN AUY/14 DAV21 --check-against ROBERT
+
+# One-time camera settings (saved in stars.json under "observatory_camera")
+python main.py --tilt 13 --turn-time 4.5 --aspect 16:10
+
+# Run tests
+python -m pytest tests
+
 # Multi-image stitching: open the marking tool on a saved session
 # (markings are loaded from the file and saved after every click)
 python main.py --stitch-session data/stitch-OBSERV.json
@@ -70,8 +84,8 @@ Claude Code runs from the Claude desktop app inside an **Ubuntu 24.04 distrobox*
 starmapper/
 ├── coords.py           # Coordinate parsing, 9-digit ↔ (x,y,z) transforms, Star dataclass
 ├── visualization.py    # matplotlib-based 3D star map rendering
-├── projection.py       # Skybox projection math (observer → sky coordinates)
-├── observatory_view.py # Simulated observatory view
+├── camera.py           # MoonCamera: first-person camera logic (turn/walk/twist, projection)
+├── observatory_view.py # Interactive first-person observatory view (uses MoonCamera)
 ├── triangulation.py    # Observation cones, intersection calculations
 ├── navigation.py       # Ship navigation guidance and orientation calibration
 ├── calibration.py      # Camera model, single-screenshot calibration, projection helpers
@@ -352,6 +366,24 @@ The game renders stars onto a **spherical skybox** that the player views from in
 - Rectilinear projection works well for stars near center of frame
 - For highest accuracy, mark reference stars away from screen edges
 - Edge accuracy matters less for triangulation since we primarily use centered stars
+
+### First-Person Observatory View (by-eye workflow)
+
+The user considers solving from screenshots "a bit cheaty"; the intended workflow is a 3D version of mapping the puzzle on graph paper. `--observatory` opens a view drawn the way the game draws it, which the user lines up by eye against the running game, then marks the anomaly with two clicks (best guess, then the radius they are confident it lies within). The screenshot tools remain as a way to validate the math.
+
+**Controls:** A/D turn, W/S walk (10°/s), Shift = slow, `[` `]` change the tilt, Esc clears a mark. Q/E twist the sky around the view center; this is the only non-game control and is physically valid—it is the same as standing elsewhere on the moon while looking at the same point (in-game it takes a wiggle of walking and turning).
+
+**Design notes:**
+- `camera.py` holds all movement and projection logic with no drawing code, so the matplotlib view could later be swapped for a real-time 3D one (the user's lost original prototype used Ursina).
+- Stars never move; only the camera's three axes change. Local "up" = the player's position on the moon.
+- The old stereographic chart with azimuth/elevation/rotation/flip settings was removed. It did not match the game's projection and its December observations were 6–8° off.
+
+**Camera constants and how sure they are:**
+- **Vertical FOV 58.7°** (`camera.py`). Derived from the fitted ~84° horizontal at 16:10. Assuming the game fixes the vertical FOV, this gives exactly 90° horizontal at 16:9, which would explain the old "~90°" note. Only verified at 1280×800.
+- **Moon's edge 20° below the view center** (measured in the OBS1 and OBS007 screenshots). This equals tilt + horizon dip; on a tiny moon the visible edge is below the true horizon.
+- **Tilt 13° (provisional).** Fitted from the curve of the moon's edge in two screenshots (12–14°, dip ≈ 7°). The earlier 30° assumption would need a negative dip and fits worst. Tilt cannot be seen in a still view; it sets the axis that A/D turns around, so tune it by comparing a turn in-game with a turn in the tool.
+- **Turn rate 80°/s** (a full A/D spin takes about 4.5 s, hand-timed by the user; rough). D turns right.
+- **Tilt check by the user:** 13° looks about right by eye when comparing turns; 0° is definitely wrong.
 
 ### Stitching Solver (v3, current)
 

@@ -14,8 +14,7 @@ from starmapper import (
     distance,
     show_map,
     plot_star_map,
-    plot_observatory_view,
-    create_interactive_observatory_view,
+    ObservatorySettings,
     plot_star_map_with_observations,
     triangulate,
     format_result,
@@ -132,24 +131,120 @@ def save_stitched_observation(
         view_state={**source, "fov_horizontal": best.calibrations[0].fov_horizontal},
     )
 
-    with open(data_path) as f:
-        data = json.load(f)
+    replace_observation(data_path, observation, source)
+    return observation
 
-    def from_same_source(obs_data: dict) -> bool:
-        view_state = obs_data.get("view_state") or {}
-        return all(view_state.get(k) == v for k, v in source.items())
 
-    data["observations"] = [
-        o for o in data.get("observations", []) if not from_same_source(o)
-    ]
-    data["observations"].append(observation.to_dict())
-
+def _write_data(data_path: Path, data: dict) -> None:
+    """Write the JSON data file atomically (write to temp, then rename)."""
     temp_path = data_path.with_suffix('.json.tmp')
     with open(temp_path, 'w') as f:
         json.dump(data, f, indent=2)
     temp_path.rename(data_path)
 
-    return observation
+
+def replace_observation(data_path: Path, observation: Observation, match: dict) -> None:
+    """Save an observation, replacing earlier ones from the same observer
+    whose view_state has all the key/value pairs in match."""
+    with open(data_path) as f:
+        data = json.load(f)
+
+    def superseded(obs_data: dict) -> bool:
+        view_state = obs_data.get("view_state") or {}
+        return (
+            obs_data.get("observer_coordinates") == observation.observer_coordinates
+            and all(view_state.get(k) == v for k, v in match.items())
+        )
+
+    data["observations"] = [
+        o for o in data.get("observations", []) if not superseded(o)
+    ]
+    data["observations"].append(observation.to_dict())
+    _write_data(data_path, data)
+
+
+def load_observatory_settings(data_path: Path) -> ObservatorySettings:
+    """Load saved first-person view settings, or defaults."""
+    with open(data_path) as f:
+        saved = json.load(f).get("observatory_camera", {})
+    settings = ObservatorySettings()
+    for key, value in saved.items():
+        if hasattr(settings, key):
+            setattr(settings, key, value)
+    return settings
+
+
+def save_observatory_settings(data_path: Path, settings: ObservatorySettings) -> None:
+    """Save first-person view settings to the JSON data file."""
+    with open(data_path) as f:
+        data = json.load(f)
+    new = {
+        "tilt_deg": settings.tilt_deg,
+        "turn_rate_deg_s": settings.turn_rate_deg_s,
+        "aspect": settings.aspect,
+        "horizon_below_center_deg": settings.horizon_below_center_deg,
+    }
+    if data.get("observatory_camera") != new:
+        data["observatory_camera"] = new
+        _write_data(data_path, data)
+
+
+def record_visible_stars(
+    data_path: Path,
+    observer: Star,
+    names: list[str],
+) -> tuple[list[str], list[str]]:
+    """Sort stars seen from an observatory into located and unlocated.
+
+    Unlocated stars (no coordinates, or not in the database yet) are recorded
+    in the data file with the observatory added to their "seen_from" list.
+
+    Returns:
+        (located, unlocated) lists of display names
+    """
+    with open(data_path) as f:
+        data = json.load(f)
+
+    located = []
+    unlocated = []
+    changed = False
+
+    for name in names:
+        entry = next(
+            (s for s in data["stars"]
+             if name.lower() in ((s.get("player_name") or "").lower(),
+                                 (s.get("original_name") or "").lower())),
+            None,
+        )
+        if entry is not None and entry.get("coordinates"):
+            located.append(entry.get("player_name") or entry.get("original_name"))
+            continue
+
+        if entry is None:
+            # Original names look like "XXX/##"; anything else is a player name
+            is_original = len(name) == 6 and name[3] == "/"
+            entry = {
+                "coordinates": None,
+                "original_name": name.upper() if is_original else None,
+                "player_name": None if is_original else name.upper(),
+                "discovered_by_user": False,
+                "has_observatory": None,
+                "observatory_active": None,
+                "anomaly_visible": None,
+            }
+            data["stars"].append(entry)
+            changed = True
+
+        seen_from = entry.setdefault("seen_from", [])
+        if observer.display_name not in seen_from:
+            seen_from.append(observer.display_name)
+            changed = True
+        unlocated.append(entry.get("player_name") or entry.get("original_name"))
+
+    if changed:
+        _write_data(data_path, data)
+
+    return located, unlocated
 
 
 def clear_all_observations(data_path: Path) -> int:
@@ -238,42 +333,40 @@ def main():
     parser.add_argument(
         "--observatory", "-o",
         type=str,
-        help="Show 2D star chart from this observatory (by name)",
+        help="Open the first-person view from this observatory (by name)",
     )
     parser.add_argument(
-        "--azimuth",
+        "--visible",
+        nargs='*',
+        metavar="STAR",
+        help="Stars you can see from the observatory. Known ones are highlighted "
+             "and centered; the rest are recorded as needing to be found",
+    )
+    parser.add_argument(
+        "--tilt",
         type=float,
-        default=0.0,
-        help="Horizontal view direction in degrees (default: 0)",
+        metavar="DEGREES",
+        help="Upward camera tilt from the horizon (saved; default 13)",
     )
     parser.add_argument(
-        "--elevation",
+        "--turn-time",
         type=float,
-        default=45.0,
-        help="Vertical view direction in degrees (default: 45)",
+        metavar="SECONDS",
+        help="Seconds for one full turn with A or D held in-game (saved)",
     )
     parser.add_argument(
-        "--rotation",
-        type=float,
-        default=0.0,
-        help="View roll in degrees (default: 0)",
+        "--aspect",
+        type=str,
+        metavar="W:H",
+        help="Game window aspect ratio, e.g. 16:10 or 16:9 (saved; default 16:10)",
     )
     parser.add_argument(
-        "--flip-horizontal",
-        action="store_true",
-        help="Mirror the view horizontally",
+        "--check-against",
+        type=str,
+        metavar="STAR",
+        help="Hide this star (the known anomaly) and report how far each mark was from it",
     )
-    parser.add_argument(
-        "--flip-vertical",
-        action="store_true",
-        help="Mirror the view vertically",
-    )
-    # Interactive and triangulation arguments
-    parser.add_argument(
-        "--interactive", "-i",
-        action="store_true",
-        help="Enable click-to-observe mode (requires --observatory)",
-    )
+    # Triangulation arguments
     parser.add_argument(
         "--triangulate", "-t",
         action="store_true",
@@ -852,6 +945,27 @@ def main():
             plt.show()
 
     # Show observatory view if requested
+    # Camera settings are saved whether or not the view is opened
+    if args.tilt is not None or args.turn_time is not None or args.aspect is not None:
+        settings = load_observatory_settings(args.data)
+        if args.tilt is not None:
+            settings.tilt_deg = args.tilt
+        if args.turn_time is not None:
+            if args.turn_time <= 0:
+                print("\nError: --turn-time must be positive")
+                return 1
+            settings.turn_rate_deg_s = 360.0 / args.turn_time
+        if args.aspect is not None:
+            try:
+                width, height = (float(part) for part in args.aspect.split(":"))
+                settings.aspect = width / height
+            except (ValueError, ZeroDivisionError):
+                print(f"\nError: --aspect must look like 16:10, got '{args.aspect}'")
+                return 1
+        save_observatory_settings(args.data, settings)
+        print(f"\nSaved camera settings: tilt {settings.tilt_deg:.0f}°, full turn "
+              f"{360.0 / settings.turn_rate_deg_s:.1f} s, aspect {settings.aspect:.3f}")
+
     if args.observatory:
         observer = find_star_by_name(stars, args.observatory)
         if observer is None:
@@ -861,56 +975,53 @@ def main():
             print(f"\nError: Star '{observer.display_name}' has no known coordinates")
             return 1
 
+        check_star = None
+        if args.check_against:
+            check_star = find_star_by_name(stars, args.check_against)
+            if check_star is None or not check_star.has_position:
+                print(f"\nError: --check-against star '{args.check_against}' has no known coordinates")
+                return 1
+
+        settings = load_observatory_settings(args.data)
+
+        located, unlocated = record_visible_stars(args.data, observer, args.visible or [])
+        stars = load_stars(args.data)
+
         print(f"\n== Observatory View from {observer.display_name} ==")
         print(f"Position: ({observer.position[0]:.0f}, {observer.position[1]:.0f}, {observer.position[2]:.0f})")
-        print(f"View: azimuth={args.azimuth}°, elevation={args.elevation}°, rotation={args.rotation}°")
+        print(f"Camera tilt: {settings.tilt_deg:.0f}°, full turn: "
+              f"{360.0 / settings.turn_rate_deg_s:.1f} s, aspect: {settings.aspect:.3f}")
+        if located:
+            print(f"Visible, known position: {', '.join(located)}")
+        if unlocated:
+            print(f"Visible, need to find:   {', '.join(unlocated)}")
+        if check_star:
+            print(f"Checking marks against {check_star.display_name} (hidden from the view)")
 
-        # Convert degrees to radians
-        az_rad = np.radians(args.azimuth)
-        el_rad = np.radians(args.elevation)
-        rot_rad = np.radians(args.rotation)
+        def on_observation(observation):
+            replace_observation(args.data, observation, {"source": "observatory_view"})
+            print(f"\n✓ Observation saved")
+            print(f"  Direction: ({observation.direction_vector[0]:.4f}, "
+                  f"{observation.direction_vector[1]:.4f}, {observation.direction_vector[2]:.4f})")
+            print(f"  Cone half-angle: {np.degrees(observation.cone_half_angle):.1f}°")
+            error = view.check_error(observation)
+            if error is not None:
+                print(f"  {check_star.display_name} was {np.degrees(error):.1f}° from your mark")
 
-        if args.interactive:
-            # Interactive mode: click to record observations
-            print("\n[INTERACTIVE MODE]")
-            print("  1. Click to mark anomaly center")
-            print("  2. Click again to set uncertainty radius")
-            print("  Observation will auto-save to data file\n")
-
-            def on_observation_complete(observation):
-                save_observation(args.data, observation)
-                deg = np.degrees(observation.cone_half_angle)
-                print(f"\n✓ Observation saved!")
-                print(f"  ID: {observation.id}")
-                print(f"  Direction: ({observation.direction_vector[0]:.3f}, "
-                      f"{observation.direction_vector[1]:.3f}, {observation.direction_vector[2]:.3f})")
-                print(f"  Cone half-angle: {deg:.1f}°")
-
-            fig, state = create_interactive_observatory_view(
-                observer=observer,
-                stars=stars,
-                center_azimuth=az_rad,
-                center_elevation=el_rad,
-                rotation=rot_rad,
-                flip_horizontal=args.flip_horizontal,
-                flip_vertical=args.flip_vertical,
-                on_observation_complete=on_observation_complete,
-            )
-        else:
-            # Non-interactive view
-            fig = plot_observatory_view(
-                observer=observer,
-                stars=stars,
-                center_azimuth=az_rad,
-                center_elevation=el_rad,
-                rotation=rot_rad,
-                show_labels=not args.no_labels,
-                flip_horizontal=args.flip_horizontal,
-                flip_vertical=args.flip_vertical,
-            )
+        from starmapper import ObservatoryView
+        view = ObservatoryView(
+            observer=observer,
+            stars=stars,
+            visible_names=located,
+            unlocated_names=unlocated,
+            settings=settings,
+            check_star=check_star,
+            on_observation=on_observation,
+            on_settings_changed=lambda s: save_observatory_settings(args.data, s),
+        )
 
         if args.save:
-            fig.savefig(args.save, dpi=150, bbox_inches='tight', facecolor='#0d0d1a')
+            view.fig.savefig(args.save, dpi=150, facecolor=view.fig.get_facecolor())
             print(f"Observatory view saved to: {args.save}")
         else:
             print("Launching observatory view...")

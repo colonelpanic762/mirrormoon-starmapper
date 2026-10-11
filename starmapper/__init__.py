@@ -2,25 +2,8 @@
 
 from .coords import Star, Observation, parse_coordinates, to_coordinate_string, distance
 from .visualization import plot_star_map, show_map, plot_star_map_with_observations
-from .projection import (
-    ChartPosition,
-    ViewState,
-    SphericalViewState,
-    project_stars_from_observer,
-    project_stars_spherical,
-    chart_to_direction,
-    chart_to_direction_spherical,
-)
-from .observatory_view import (
-    plot_observatory_view,
-    plot_observatory_view_spherical,
-    show_observatory_view,
-    show_observatory_view_spherical,
-    create_interactive_observatory_view,
-    create_interactive_observatory_view_spherical,
-    ClickState,
-    InteractiveState,
-)
+from .camera import MoonCamera, horizontal_fov, vertical_fov
+from .observatory_view import ObservatoryView, ObservatorySettings
 from .triangulation import (
     triangulate,
     TriangulationResult,
@@ -76,10 +59,6 @@ __all__ = [
     # Core data types
     "Star",
     "Observation",
-    "ChartPosition",
-    "ViewState",
-    "ClickState",
-    "InteractiveState",
     "NavCalibration",
     "NavigationResult",
     # Coordinate functions
@@ -90,19 +69,12 @@ __all__ = [
     "plot_star_map",
     "show_map",
     "plot_star_map_with_observations",
-    # Observatory projection (spherical model)
-    "SphericalViewState",
-    "project_stars_spherical",
-    "chart_to_direction_spherical",
-    "plot_observatory_view_spherical",
-    "show_observatory_view_spherical",
-    "create_interactive_observatory_view_spherical",
-    # Observatory projection (legacy)
-    "project_stars_from_observer",
-    "chart_to_direction",
-    "plot_observatory_view",
-    "show_observatory_view",
-    "create_interactive_observatory_view",
+    # First-person observatory view
+    "MoonCamera",
+    "horizontal_fov",
+    "vertical_fov",
+    "ObservatoryView",
+    "ObservatorySettings",
     # Triangulation
     "triangulate",
     "TriangulationResult",
