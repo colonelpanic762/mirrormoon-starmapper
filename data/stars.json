@@ -295,7 +295,7 @@
       "notes": "Visible from OBS007. Approx region: (1xx, 1xx, 5xx)"
     },
     {
-      "coordinates": null,
+      "coordinates": "012330816",
       "original_name": null,
       "player_name": "AUT56",
       "discovered_by_user": false,
@@ -305,6 +305,18 @@
       "notes": "Reference star VERY close to anomaly (from OBS1 view, 11 o'clock)",
       "seen_from": [
         "OBS1"
+      ],
+      "sightings": [
+        {
+          "observer": "OBS1",
+          "direction": [
+            -0.5884827977393716,
+            -0.6945406696189564,
+            0.41388555786605224
+          ],
+          "cone_half_angle": 0.0452495583280165,
+          "timestamp": "2026-10-11T01:57:30.740563Z"
+        }
       ]
     },
     {
